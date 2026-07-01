@@ -4,7 +4,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -26,7 +25,6 @@ fun CameraRoute(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
-    val context = LocalContext.current
 
     val permissions = rememberMultiplePermissionsState(
         permissions = listOf(
@@ -35,27 +33,34 @@ fun CameraRoute(
         )
     )
 
-    DisposableEffect(lifecycleOwner) {
-        viewModel.bindCamera(lifecycleOwner)
+    val cameraGranted = permissions.permissions
+        .find { it.permission == android.Manifest.permission.CAMERA }
+        ?.status?.isGranted == true
+
+    val audioGranted = permissions.permissions
+        .find { it.permission == android.Manifest.permission.RECORD_AUDIO }
+        ?.status?.isGranted == true
+
+    // Only bind the camera once the permission is granted, and re-bind if the
+    // permission state (or lifecycle owner) changes.
+    DisposableEffect(lifecycleOwner, cameraGranted) {
+        if (cameraGranted) {
+            viewModel.bindCamera(lifecycleOwner)
+        }
         onDispose {
             viewModel.unbindCamera()
         }
     }
 
-    LaunchedEffect(permissions.allPermissionsGranted) {
-        val cameraGranted = permissions.permissions
-            .find { it.permission == android.Manifest.permission.CAMERA }
-            ?.status?.isGranted == true
-        val audioGranted = permissions.permissions
-            .find { it.permission == android.Manifest.permission.RECORD_AUDIO }
-            ?.status?.isGranted == true
-
+    LaunchedEffect(cameraGranted) {
         if (cameraGranted) {
             viewModel.onEvent(CameraEvent.OnCameraPermissionGranted)
         } else {
             viewModel.onEvent(CameraEvent.OnCameraPermissionDenied)
         }
+    }
 
+    LaunchedEffect(audioGranted) {
         if (audioGranted) {
             viewModel.onEvent(CameraEvent.OnAudioPermissionGranted)
         } else {
