@@ -1,0 +1,296 @@
+package com.nash.core.camera
+
+import android.Manifest
+import android.annotation.SuppressLint
+import android.content.ContentValues
+import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
+import android.view.View
+import androidx.core.content.ContextCompat
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.Preview
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.video.MediaStoreOutputOptions
+import androidx.camera.video.Recorder
+import androidx.camera.video.Recording
+import androidx.camera.video.VideoCapture
+import androidx.camera.video.VideoRecordEvent
+import androidx.camera.view.PreviewView
+import androidx.lifecycle.LifecycleOwner
+import com.nash.core.common.DispatcherProvider
+import com.nash.core.model.RecordingConfig
+import com.nash.core.model.RecordingStartResult
+import com.nash.core.model.RecordingState
+import com.nash.core.model.RecordingStopResult
+import com.nash.core.model.VideoRecorder
+import dagger.hilt.android.qualifiers.ApplicationContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import javax.inject.Inject
+import javax.inject.Singleton
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.guava.await
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+/**
+ * CameraX-backed video recorder.
+ *
+ * This is the **only** class in the project that writes video. It currently records the
+ * direct CameraX [VideoCapture] output; the future anonymized SurfaceProcessor pipeline
+ * will be spliced between the camera and the encoder while keeping this class as the
+ * single video writer.
+ *
+ * Lifecycle binding and preview creation are exposed as plain methods so a domain-layer
+ * adapter can implement the cross-module [CameraSession] / [CameraPreviewFactory] contracts
+ * without forcing [core.camera] to depend on [core.domain].
+ *
+ * TODO: Replace the direct [VideoCapture] recording path with a processed SurfaceProcessor
+ *       output when the anonymization renderer is connected. Until then, keep all recording
+ *       output flowing through this class and never persist raw frames elsewhere.
+ */
+@Singleton
+class CameraXCameraController @Inject constructor(
+    @param:ApplicationContext private val context: Context,
+    private val dispatcherProvider: DispatcherProvider
+) : VideoRecorder {
+
+    private val controllerScope = CoroutineScope(
+        SupervisorJob() + dispatcherProvider.io
+    )
+
+    private val cameraExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val cameraProviderFuture by lazy {
+        ProcessCameraProvider.getInstance(context)
+    }
+
+    private var cameraProvider: ProcessCameraProvider? = null
+    private var previewUseCase: Preview? = null
+    private var recorder: Recorder? = null
+    private var videoCapture: VideoCapture<Recorder>? = null
+
+    @Volatile
+    private var previewView: PreviewView? = null
+
+    @Volatile
+    private var activeRecording: Recording? = null
+
+    private var finalizeResult: CompletableDeferred<RecordingStopResult>? = null
+
+    private val _recordingState = MutableStateFlow<RecordingState>(RecordingState.Idle)
+    override val recordingState: Flow<RecordingState> = _recordingState.asStateFlow()
+
+    /**
+     * Creates a CameraX [PreviewView] that the feature layer can display inside an
+     * [androidx.compose.ui.viewinterop.AndroidView]. The raw camera Surface never leaves
+     * this module.
+     *
+     * The return type is [View] so callers outside this module do not need a CameraX
+     * dependency to consume the preview.
+     */
+    fun createPreviewView(context: Context): View {
+        return PreviewView(context).apply {
+            implementationMode = PreviewView.ImplementationMode.PERFORMANCE
+            scaleType = PreviewView.ScaleType.FILL_CENTER
+        }.also { view ->
+            previewView = view
+            attachSurfaceProviderIfReady()
+        }
+    }
+
+    /**
+     * Binds the camera pipeline to the supplied [lifecycleOwner].
+     *
+     * Must be called after [createPreviewView] when the screen enters composition.
+     */
+    fun bind(lifecycleOwner: LifecycleOwner) {
+        controllerScope.launch {
+            try {
+                val provider = cameraProviderFuture.await()
+                cameraProvider = provider
+
+                val preview = Preview.Builder().build().also {
+                    previewUseCase = it
+                }
+                attachSurfaceProviderIfReady()
+
+                val recorderInstance = Recorder.Builder()
+                    .setExecutor(cameraExecutor)
+                    .build()
+                    .also { recorder = it }
+
+                val videoCaptureInstance = VideoCapture.withOutput(recorderInstance)
+                    .also { videoCapture = it }
+
+                provider.bindToLifecycle(
+                    lifecycleOwner,
+                    CameraSelector.DEFAULT_BACK_CAMERA,
+                    preview,
+                    videoCaptureInstance
+                )
+            } catch (e: Exception) {
+                _recordingState.value = RecordingState.Error(
+                    message = e.message ?: "Failed to bind camera",
+                    cause = e
+                )
+            }
+        }
+    }
+
+    /**
+     * Unbinds the camera pipeline from the current lifecycle owner.
+     */
+    fun unbind() {
+        try {
+            activeRecording?.stop()
+            activeRecording?.close()
+        } catch (_: Exception) {
+            // Best-effort cleanup; the finalize event will report any real error.
+        }
+        cameraProvider?.unbindAll()
+    }
+
+    @SuppressLint("MissingPermission")
+    override suspend fun startRecording(config: RecordingConfig): RecordingStartResult {
+        return withContext(dispatcherProvider.io) {
+            val currentRecorder = recorder
+                ?: return@withContext RecordingStartResult.Failure(
+                    "Camera not initialized. Bind the camera before recording."
+                )
+
+            if (activeRecording != null) {
+                return@withContext RecordingStartResult.Failure("Recording already in progress")
+            }
+
+            _recordingState.value = RecordingState.Starting
+
+            try {
+                val contentValues = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, generateFilename(config.fileNamePrefix))
+                    put(MediaStore.MediaColumns.MIME_TYPE, MIME_TYPE)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        put(
+                            MediaStore.MediaColumns.RELATIVE_PATH,
+                            "${Environment.DIRECTORY_MOVIES}/$OUTPUT_DIRECTORY"
+                        )
+                    }
+                }
+
+                val outputOptions = MediaStoreOutputOptions.Builder(
+                    context.contentResolver,
+                    MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                ).setContentValues(contentValues).build()
+
+                var pendingRecording = currentRecorder.prepareRecording(context, outputOptions)
+
+                if (config.includeAudio &&
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                    PackageManager.PERMISSION_GRANTED
+                ) {
+                    pendingRecording = try {
+                        pendingRecording.withAudioEnabled()
+                    } catch (_: SecurityException) {
+                        // Audio permission was revoked between check and record; fall back
+                        // to video-only rather than crashing.
+                        pendingRecording
+                    }
+                }
+
+                finalizeResult = CompletableDeferred()
+
+                activeRecording = pendingRecording.start(cameraExecutor) { event ->
+                    when (event) {
+                        is VideoRecordEvent.Start -> {
+                            _recordingState.value = RecordingState.Recording(
+                                startedAtMillis = System.currentTimeMillis()
+                            )
+                        }
+
+                        is VideoRecordEvent.Finalize -> {
+                            activeRecording = null
+                            val result = if (!event.hasError()) {
+                                RecordingStopResult.Saved(
+                                    uri = event.outputResults.outputUri.toString()
+                                )
+                            } else {
+                                RecordingStopResult.Failure(
+                                    message = event.cause?.message ?: "Recording failed",
+                                    cause = event.cause
+                                )
+                            }
+                            finalizeResult?.complete(result)
+                            _recordingState.value = when (result) {
+                                is RecordingStopResult.Saved -> RecordingState.Saved(result.uri)
+                                is RecordingStopResult.Failure -> RecordingState.Error(
+                                    message = result.message,
+                                    cause = result.cause
+                                )
+                            }
+                        }
+                    }
+                }
+
+                RecordingStartResult.Started
+            } catch (e: Exception) {
+                _recordingState.value = RecordingState.Error(
+                    message = e.message ?: "Failed to start recording",
+                    cause = e
+                )
+                RecordingStartResult.Failure(e.message ?: "Failed to start recording", e)
+            }
+        }
+    }
+
+    override suspend fun stopRecording(): RecordingStopResult {
+        return withContext(dispatcherProvider.io) {
+            val recording = activeRecording
+                ?: return@withContext RecordingStopResult.Failure("No active recording")
+
+            _recordingState.value = RecordingState.Stopping
+
+            try {
+                recording.stop()
+                val result = finalizeResult?.await()
+                    ?: RecordingStopResult.Failure("Recording did not finalize")
+                finalizeResult = null
+                result
+            } catch (e: Exception) {
+                RecordingStopResult.Failure(e.message ?: "Failed to stop recording", e)
+            }
+        }
+    }
+
+    private fun attachSurfaceProviderIfReady() {
+        val view = previewView ?: return
+        val preview = previewUseCase ?: return
+        preview.setSurfaceProvider(view.surfaceProvider)
+    }
+
+    private fun generateFilename(prefix: String): String {
+        val timestamp = SimpleDateFormat(FILENAME_TIMESTAMP, Locale.getDefault()).format(Date())
+        return "${prefix}_$timestamp.mp4"
+    }
+
+    fun shutdown() {
+        controllerScope.cancel()
+        cameraExecutor.shutdown()
+    }
+
+    private companion object {
+        const val MIME_TYPE = "video/mp4"
+        const val OUTPUT_DIRECTORY = "BlurGuard"
+        const val FILENAME_TIMESTAMP = "yyyy-MM-dd_HH-mm"
+    }
+}
