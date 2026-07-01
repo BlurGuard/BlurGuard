@@ -116,9 +116,13 @@ class CameraXCameraController @Inject constructor(
      * Must be called after [createPreviewView] when the screen enters composition.
      */
     fun bind(lifecycleOwner: LifecycleOwner) {
-        controllerScope.launch {
+        // CameraX lifecycle binding and surface-provider attachment must run on the
+        // main thread; only the provider future resolution can safely happen on IO.
+        controllerScope.launch(dispatcherProvider.main) {
             try {
-                val provider = cameraProviderFuture.await()
+                val provider = withContext(dispatcherProvider.io) {
+                    cameraProviderFuture.await()
+                }
                 cameraProvider = provider
 
                 val preview = Preview.Builder().build().also {
@@ -153,13 +157,15 @@ class CameraXCameraController @Inject constructor(
      * Unbinds the camera pipeline from the current lifecycle owner.
      */
     fun unbind() {
-        try {
-            activeRecording?.stop()
-            activeRecording?.close()
-        } catch (_: Exception) {
-            // Best-effort cleanup; the finalize event will report any real error.
+        controllerScope.launch(dispatcherProvider.main) {
+            try {
+                activeRecording?.stop()
+                activeRecording?.close()
+            } catch (_: Exception) {
+                // Best-effort cleanup; the finalize event will report any real error.
+            }
+            cameraProvider?.unbindAll()
         }
-        cameraProvider?.unbindAll()
     }
 
     @SuppressLint("MissingPermission")
