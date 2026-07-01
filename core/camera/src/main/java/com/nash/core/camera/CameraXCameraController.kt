@@ -103,7 +103,7 @@ class CameraXCameraController @Inject constructor(
     fun createPreviewView(context: Context): View {
         return PreviewView(context).apply {
             implementationMode = PreviewView.ImplementationMode.PERFORMANCE
-            scaleType = PreviewView.ScaleType.FILL_CENTER
+            scaleType = PreviewView.ScaleType.FIT_CENTER
         }.also { view ->
             previewView = view
             attachSurfaceProviderIfReady()
