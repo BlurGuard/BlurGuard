@@ -15,5 +15,8 @@ kotlin {
 }
 
 dependencies {
-    // Leaf module - no internal dependencies
+    implementation(libs.coroutines.core)
+    implementation("javax.inject:javax.inject:1")
+
+    testImplementation(libs.junit)
 }
