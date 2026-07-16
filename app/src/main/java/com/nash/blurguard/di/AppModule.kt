@@ -4,15 +4,23 @@ import androidx.camera.core.ImageProxy
 import com.nash.core.camera.CameraXCameraController
 import com.nash.core.common.DefaultDispatcherProvider
 import com.nash.core.common.DispatcherProvider
+import com.nash.core.common.di.FaceDetection
 import com.nash.core.domain.CameraControllerAdapter
 import com.nash.core.domain.CameraPreviewFactory
 import com.nash.core.domain.CameraSession
+import com.nash.core.ml.MediaPipeFaceDetector
+import com.nash.core.model.Detector
+import com.nash.core.model.DetectorConfig
+import com.nash.core.model.DetectorDelegate
+import com.nash.core.model.FaceModelRange
 import com.nash.core.model.FrameSource
 import com.nash.core.model.VideoRecorder
 import dagger.Binds
 import dagger.Module
+import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import javax.inject.Singleton
 
 /**
  * Application-wide Hilt module.
@@ -48,4 +56,25 @@ abstract class AppModule {
     abstract fun bindFrameSource(
         controller: CameraXCameraController
     ): FrameSource<ImageProxy>
+
+    @Binds
+    @FaceDetection
+    abstract fun bindFaceDetector(
+        detector: MediaPipeFaceDetector
+    ): Detector<ImageProxy>
+
+    companion object {
+        /**
+         * Detection accelerator policy: CPU by default so the GPU stays
+         * dedicated to the anonymization renderer (NFR-02). Revisit only
+         * with benchmark evidence.
+         */
+        @Provides
+        @Singleton
+        fun provideDetectorConfig(): DetectorConfig = DetectorConfig(
+            delegate = DetectorDelegate.CPU,
+            minConfidence = 0.5f,
+            faceModelRange = FaceModelRange.FULL_RANGE
+        )
+    }
 }
