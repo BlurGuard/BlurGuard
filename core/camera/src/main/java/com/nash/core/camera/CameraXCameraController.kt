@@ -8,10 +8,15 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import android.util.Size
 import android.view.View
 import androidx.core.content.ContextCompat
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.MediaStoreOutputOptions
 import androidx.camera.video.Recorder
@@ -21,6 +26,9 @@ import androidx.camera.video.VideoRecordEvent
 import androidx.camera.view.PreviewView
 import androidx.lifecycle.LifecycleOwner
 import com.nash.core.common.DispatcherProvider
+import com.nash.core.model.FrameConsumer
+import com.nash.core.model.FrameMetadata
+import com.nash.core.model.FrameSource
 import com.nash.core.model.RecordingConfig
 import com.nash.core.model.RecordingStartResult
 import com.nash.core.model.RecordingState
@@ -32,6 +40,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CompletableDeferred
@@ -46,12 +55,18 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * CameraX-backed video recorder.
+ * CameraX-backed video recorder and analysis-frame source.
  *
  * This is the **only** class in the project that writes video. It currently records the
  * direct CameraX [VideoCapture] output; the future anonymized SurfaceProcessor pipeline
  * will be spliced between the camera and the encoder while keeping this class as the
  * single video writer.
+ *
+ * It also owns the parallel analysis branch ([ImageAnalysis]): downsampled frames are
+ * delivered to a single [FrameConsumer] (the frame-pipeline orchestrator in core/domain)
+ * on the serialized ml dispatcher. Frame ownership stays in this class — the [ImageProxy]
+ * is closed here after the consumer returns, which is also what drives CameraX's
+ * latest-wins backpressure (STRATEGY_KEEP_ONLY_LATEST).
  *
  * Lifecycle binding and preview creation are exposed as plain methods so a domain-layer
  * adapter can implement the cross-module [CameraSession] / [CameraPreviewFactory] contracts
@@ -65,10 +80,18 @@ import kotlinx.coroutines.withContext
 class CameraXCameraController @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val dispatcherProvider: DispatcherProvider
-) : VideoRecorder {
+) : VideoRecorder, FrameSource<ImageProxy> {
 
     private val controllerScope = CoroutineScope(
         SupervisorJob() + dispatcherProvider.io
+    )
+
+    /**
+     * Scope for per-frame analysis work. The ml dispatcher has parallelism 1, so
+     * frames are processed strictly one at a time, in order, without blocking a thread.
+     */
+    private val analysisScope = CoroutineScope(
+        SupervisorJob() + dispatcherProvider.ml
     )
 
     private val cameraExecutor: ExecutorService = Executors.newSingleThreadExecutor()
@@ -78,8 +101,14 @@ class CameraXCameraController @Inject constructor(
 
     private var cameraProvider: ProcessCameraProvider? = null
     private var previewUseCase: Preview? = null
+    private var imageAnalysisUseCase: ImageAnalysis? = null
     private var recorder: Recorder? = null
     private var videoCapture: VideoCapture<Recorder>? = null
+
+    private val frameIdGenerator = AtomicLong(0L)
+
+    @Volatile
+    private var frameConsumer: FrameConsumer<ImageProxy>? = null
 
     @Volatile
     private var previewView: PreviewView? = null
@@ -91,6 +120,10 @@ class CameraXCameraController @Inject constructor(
 
     private val _recordingState = MutableStateFlow<RecordingState>(RecordingState.Idle)
     override val recordingState: Flow<RecordingState> = _recordingState.asStateFlow()
+
+    override fun setFrameConsumer(consumer: FrameConsumer<ImageProxy>?) {
+        frameConsumer = consumer
+    }
 
     /**
      * Creates a CameraX [PreviewView] that the feature layer can display inside an
@@ -138,11 +171,55 @@ class CameraXCameraController @Inject constructor(
                 val videoCaptureInstance = VideoCapture.withOutput(recorderInstance)
                     .also { videoCapture = it }
 
+                val imageAnalysisInstance = ImageAnalysis.Builder()
+                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                    .setResolutionSelector(
+                        ResolutionSelector.Builder()
+                            .setResolutionStrategy(
+                                ResolutionStrategy(
+                                    Size(ANALYSIS_WIDTH, ANALYSIS_HEIGHT),
+                                    ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER
+                                )
+                            )
+                            .build()
+                    )
+                    .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+                    .build()
+                    .also { imageAnalysisUseCase = it }
+
+                // Runnable::run is a direct executor: the callback only builds metadata
+                // and hands the frame to the analysis coroutine, so it is cheap enough
+                // to run on CameraX's own thread.
+                imageAnalysisInstance.setAnalyzer(Runnable::run) { imageProxy ->
+                    val consumer = frameConsumer
+                    if (consumer == null) {
+                        imageProxy.close()
+                        return@setAnalyzer
+                    }
+                    val metadata = FrameMetadata(
+                        frameId = frameIdGenerator.incrementAndGet(),
+                        timestampNanos = imageProxy.imageInfo.timestamp,
+                        width = imageProxy.width,
+                        height = imageProxy.height,
+                        rotationDegrees = imageProxy.imageInfo.rotationDegrees
+                    )
+                    analysisScope.launch {
+                        try {
+                            consumer.onFrame(imageProxy, metadata)
+                        } finally {
+                            // Closing the frame is what lets CameraX deliver the next
+                            // (latest) one — this IS the backpressure/subsampling signal.
+                            imageProxy.close()
+                        }
+                    }
+                }
+
                 provider.bindToLifecycle(
                     lifecycleOwner,
                     CameraSelector.DEFAULT_BACK_CAMERA,
                     preview,
-                    videoCaptureInstance
+                    videoCaptureInstance,
+                    imageAnalysisInstance
                 )
             } catch (e: Exception) {
                 _recordingState.value = RecordingState.Error(
@@ -164,6 +241,7 @@ class CameraXCameraController @Inject constructor(
             } catch (_: Exception) {
                 // Best-effort cleanup; the finalize event will report any real error.
             }
+            imageAnalysisUseCase?.clearAnalyzer()
             cameraProvider?.unbindAll()
         }
     }
@@ -291,6 +369,7 @@ class CameraXCameraController @Inject constructor(
 
     fun shutdown() {
         controllerScope.cancel()
+        analysisScope.cancel()
         cameraExecutor.shutdown()
     }
 
@@ -298,5 +377,9 @@ class CameraXCameraController @Inject constructor(
         const val MIME_TYPE = "video/mp4"
         const val OUTPUT_DIRECTORY = "BlurGuard"
         const val FILENAME_TIMESTAMP = "yyyy-MM-dd_HH-mm"
+
+        /** Target analysis resolution — detection models downscale further anyway. */
+        const val ANALYSIS_WIDTH = 640
+        const val ANALYSIS_HEIGHT = 480
     }
 }

@@ -54,7 +54,7 @@ dependencies {
     // Core
     implementation(project(":core:common"))
     implementation(project(":core:model"))
-    implementation(project(":core:camera"))
+    api(libs.camera.core)
     implementation(project(":core:blurring"))
     implementation(project(":core:ml"))
     implementation(project(":core:tracking"))
@@ -62,7 +62,7 @@ dependencies {
     implementation(project(":core:domain"))
     implementation(project(":core:data"))
     implementation(project(":core:designsystem"))
-
+    implementation(project(":core:camera"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)

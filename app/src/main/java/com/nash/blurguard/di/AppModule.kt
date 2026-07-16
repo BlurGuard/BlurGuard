@@ -1,11 +1,13 @@
 package com.nash.blurguard.di
 
+import androidx.camera.core.ImageProxy
 import com.nash.core.camera.CameraXCameraController
 import com.nash.core.common.DefaultDispatcherProvider
 import com.nash.core.common.DispatcherProvider
 import com.nash.core.domain.CameraControllerAdapter
 import com.nash.core.domain.CameraPreviewFactory
 import com.nash.core.domain.CameraSession
+import com.nash.core.model.FrameSource
 import com.nash.core.model.VideoRecorder
 import dagger.Binds
 import dagger.Module
@@ -41,4 +43,9 @@ abstract class AppModule {
     abstract fun bindCameraPreviewFactory(
         adapter: CameraControllerAdapter
     ): CameraPreviewFactory
+
+    @Binds
+    abstract fun bindFrameSource(
+        controller: CameraXCameraController
+    ): FrameSource<ImageProxy>
 }
