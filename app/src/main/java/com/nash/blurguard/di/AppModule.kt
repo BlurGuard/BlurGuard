@@ -8,7 +8,10 @@ import com.nash.core.common.di.FaceDetection
 import com.nash.core.domain.CameraControllerAdapter
 import com.nash.core.domain.CameraPreviewFactory
 import com.nash.core.domain.CameraSession
+import com.nash.core.domain.DefaultAnonymizationEngine
+import com.nash.core.domain.DefaultAnonymizationPipeline
 import com.nash.core.ml.MediaPipeFaceDetector
+import com.nash.core.model.AnonymizationEngine
 import com.nash.core.model.Detector
 import com.nash.core.model.DetectorConfig
 import com.nash.core.model.DetectorDelegate
@@ -77,7 +80,25 @@ abstract class AppModule {
         fun provideDetectorConfig(): DetectorConfig = DetectorConfig(
             delegate = DetectorDelegate.CPU,
             minConfidence = 0.5f,
-            faceModelRange = FaceModelRange.FULL_RANGE
+            faceModelRange = FaceModelRange.SHORT_RANGE
+        )
+
+        @Provides
+        @Singleton
+        fun provideTrackerConfig(): TrackerConfig = TrackerConfig()
+
+        @Provides
+        @Singleton
+        fun provideAnonymizationEngine(
+            frameSource: @JvmSuppressWildcards FrameSource<ImageProxy>,
+            @FaceDetection faceDetector: @JvmSuppressWildcards Detector<ImageProxy>,
+            tracker: Tracker
+        ): AnonymizationEngine = DefaultAnonymizationEngine(
+            frameSource = frameSource,
+            pipeline = DefaultAnonymizationPipeline(
+                detectors = listOf(faceDetector),
+                tracker = tracker
+            )
         )
     }
 
@@ -86,7 +107,5 @@ abstract class AppModule {
         tracker: ByteTrackTracker
     ): Tracker
 
-    @Provides
-    @Singleton
-    fun provideTrackerConfig(): TrackerConfig = TrackerConfig()
+
 }

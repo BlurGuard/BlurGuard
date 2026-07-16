@@ -32,11 +32,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.nash.core.domain.CameraPreviewFactory
 import com.nash.core.model.RecordingState
+import com.nash.core.model.TrackedBox
+import com.nash.feature.camera.components.TrackingOverlay
 
 /**
  * Camera recording screen.
  *
- * Displays the camera preview, record/stop controls, and status information.
+ * Displays the camera preview, record/stop controls, status information, and
+ * the debug tracking overlay (boxes following detected faces/plates).
  * The preview is rendered via an [AndroidView] using the domain-layer
  * [CameraPreviewFactory] so this module never imports CameraX directly.
  */
@@ -44,6 +47,7 @@ import com.nash.core.model.RecordingState
 fun CameraScreen(
     uiState: CameraUiState,
     previewFactory: CameraPreviewFactory,
+    trackedBoxes: List<TrackedBox>,
     onRecordClick: () -> Unit,
     onStopClick: () -> Unit,
     onRequestPermissions: () -> Unit,
@@ -76,6 +80,13 @@ fun CameraScreen(
                 CameraPreview(
                     factory = previewFactory,
                     context = context,
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                // Debug overlay: must sit directly on top of the preview and
+                // share its exact bounds so normalized coords line up.
+                TrackingOverlay(
+                    boxes = trackedBoxes,
                     modifier = Modifier.fillMaxSize()
                 )
 

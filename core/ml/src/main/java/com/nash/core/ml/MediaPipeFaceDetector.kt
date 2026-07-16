@@ -90,27 +90,55 @@ class MediaPipeFaceDetector @Inject constructor(
 
         val result = faceDetector.detect(mpImage, processingOptions)
 
-        // MediaPipe returns pixel coords in UPRIGHT image space: width/height
-        // swap when the frame is rotated 90 or 270 degrees.
-        val rotated = metadata.rotationDegrees % 180 != 0
-        val uprightWidth = (if (rotated) metadata.height else metadata.width).toFloat()
-        val uprightHeight = (if (rotated) metadata.width else metadata.height).toFloat()
+        // MediaPipe rotates internally for inference, but returns pixel coords
+        // in the UNROTATED input bitmap's space. Normalize against the bitmap,
+        // then rotate the normalized box into upright (display) space.
+        val bufferWidth = bitmap.width.toFloat()
+        val bufferHeight = bitmap.height.toFloat()
 
         result.detections().map { detection ->
             val rect = detection.boundingBox()
+            val bufferBox = BoundingBox(
+                left = (rect.left / bufferWidth).coerceIn(0f, 1f),
+                top = (rect.top / bufferHeight).coerceIn(0f, 1f),
+                right = (rect.right / bufferWidth).coerceIn(0f, 1f),
+                bottom = (rect.bottom / bufferHeight).coerceIn(0f, 1f)
+            )
             DetectionBox(
-                box = BoundingBox(
-                    left = (rect.left / uprightWidth).coerceIn(0f, 1f),
-                    top = (rect.top / uprightHeight).coerceIn(0f, 1f),
-                    right = (rect.right / uprightWidth).coerceIn(0f, 1f),
-                    bottom = (rect.bottom / uprightHeight).coerceIn(0f, 1f)
-                ),
+                box = bufferBox.rotatedToUpright(metadata.rotationDegrees),
                 clazz = DetectionClass.FACE,
                 confidence = detection.categories().firstOrNull()?.score() ?: 0f
             )
         }
     }
 
+    /**
+     * Rotates a normalized box from unrotated-buffer space into upright space.
+     * [rotationDegrees] is the clockwise rotation that makes the buffer upright
+     * (CameraX convention); always a multiple of 90.
+     */
+    private fun BoundingBox.rotatedToUpright(rotationDegrees: Int): BoundingBox =
+        when ((rotationDegrees % 360 + 360) % 360) {
+            90 -> BoundingBox(
+                left = 1f - bottom,
+                top = left,
+                right = 1f - top,
+                bottom = right
+            )
+            180 -> BoundingBox(
+                left = 1f - right,
+                top = 1f - bottom,
+                right = 1f - left,
+                bottom = 1f - top
+            )
+            270 -> BoundingBox(
+                left = top,
+                top = 1f - right,
+                right = bottom,
+                bottom = 1f - left
+            )
+            else -> this
+        }
     override fun close() {
         faceDetector.close()
     }
