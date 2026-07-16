@@ -10,7 +10,6 @@ package com.nash.core.model
  * @property lastUpdatedFrame The frame ID when this object was last explicitly detected or updated.
  * Used by the renderer to handle interpolation or occlusion.
  * @property keepVisible If true, this object should NOT be anonymized (e.g., a "trusted face").
- * Decided by the domain layer based on recognition results.
  */
 data class TrackedBox(
     val id: TrackId,

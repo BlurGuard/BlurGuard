@@ -3,7 +3,7 @@ package com.nash.core.model
 /**
  * Generic contract for on-device object detection.
  *
- * Implementations live in core/ml (e.g., TFLite or LiteRT wrappers).
+ * Implementations live in core/ml.
  *
  * @param F The frame type, kept generic to ensure core/model remains a leaf module
  * (e.g., ImageProxy in CameraX implementations).

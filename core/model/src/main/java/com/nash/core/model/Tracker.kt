@@ -3,7 +3,7 @@ package com.nash.core.model
 /**
  * Contract for multi-object tracking across frames.
  *
- * Implementation lives in core/tracking (e.g., ByteTrack).
+ * Implementation lives in core/tracking.
  */
 interface Tracker {
     /**
