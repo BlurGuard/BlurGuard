@@ -1,11 +1,17 @@
 package com.nash.core.model
 
 /**
- * Normalized coordinates for a detected object.
- * Values are in the range [0.0, 1.0], relative to the frame dimensions.
+ * Axis-aligned bounding box in **normalized** coordinates ([0, 1] relative to
+ * the frame dimensions in [FrameMetadata]), independent of resolution and rotation.
  *
- * This type is used across all detection and tracking modules to represent geometry
- * without dependencies on specific image resolutions.
+ * Used by [DetectionBox] (raw detections from core/ml) and [TrackedBox]
+ * (tracked objects from core/tracking). Use [FrameMetadata.width] /
+ * [FrameMetadata.height] to map back to pixel space.
+ *
+ * @property left Normalized left edge (x of the top-left corner).
+ * @property top Normalized top edge (y of the top-left corner).
+ * @property right Normalized right edge (x of the bottom-right corner).
+ * @property bottom Normalized bottom edge (y of the bottom-right corner).
  */
 data class BoundingBox(
     val left: Float,
@@ -13,28 +19,28 @@ data class BoundingBox(
     val right: Float,
     val bottom: Float
 ) {
-    /**
-     * Width of the box in normalized coordinates.
-     */
-    val width: Float get() = (right - left).coerceAtLeast(0f)
-
-    /**
-     * Height of the box in normalized coordinates.
-     */
-    val height: Float get() = (bottom - top).coerceAtLeast(0f)
-
-    /**
-     * Horizontal center of the box.
-     */
-    val centerX: Float get() = left + width / 2f
-
-    /**
-     * Vertical center of the box.
-     */
-    val centerY: Float get() = top + height / 2f
-
     init {
-        require(left <= right) { "left ($left) must be <= right ($right)" }
-        require(top <= bottom) { "top ($top) must be <= bottom ($bottom)" }
+        require(left <= right) {
+            "Invalid horizontal coordinates: left ($left) must be <= right ($right)"
+        }
+        require(top <= bottom) {
+            "Invalid vertical coordinates: top ($top) must be <= bottom ($bottom)"
+        }
     }
+
+    /** Normalized width of the box. */
+    val width: Float
+        get() = right - left
+
+    /** Normalized height of the box. */
+    val height: Float
+        get() = bottom - top
+
+    /** Normalized x coordinate of the box center. */
+    val centerX: Float
+        get() = (left + right) / 2f
+
+    /** Normalized y coordinate of the box center. */
+    val centerY: Float
+        get() = (top + bottom) / 2f
 }
