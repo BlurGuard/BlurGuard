@@ -17,4 +17,7 @@ kotlin {
 dependencies {
     implementation(project(":core:model"))
     implementation(project(":core:common"))
+    implementation("javax.inject:javax.inject:1")
+
+    testImplementation(libs.junit)
 }

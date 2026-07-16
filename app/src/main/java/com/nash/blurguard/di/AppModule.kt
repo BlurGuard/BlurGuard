@@ -14,7 +14,10 @@ import com.nash.core.model.DetectorConfig
 import com.nash.core.model.DetectorDelegate
 import com.nash.core.model.FaceModelRange
 import com.nash.core.model.FrameSource
+import com.nash.core.model.Tracker
+import com.nash.core.model.TrackerConfig
 import com.nash.core.model.VideoRecorder
+import com.nash.core.tracking.ByteTrackTracker
 import dagger.Binds
 import dagger.Module
 import dagger.Provides
@@ -77,4 +80,13 @@ abstract class AppModule {
             faceModelRange = FaceModelRange.FULL_RANGE
         )
     }
+
+    @Binds
+    abstract fun bindTracker(
+        tracker: ByteTrackTracker
+    ): Tracker
+
+    @Provides
+    @Singleton
+    fun provideTrackerConfig(): TrackerConfig = TrackerConfig()
 }
