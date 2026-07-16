@@ -21,6 +21,6 @@ data class TrackerConfig(
     val highScoreThreshold: Float = 0.6f,
     val lowScoreThreshold: Float = 0.1f,
     val iouThreshold: Float = 0.3f,
-    val maxLostFrames: Long = 30L,
-    val velocitySmoothing: Float = 0.8f
+    val maxLostFrames: Long = 5L,
+    val velocitySmoothing: Float = 0.85f
 )

@@ -36,7 +36,7 @@ dependencies {
 
     // BlazeFace via MediaPipe Tasks (TFLite/LiteRT under the hood, fully on-device).
     implementation(libs.mediapipe.tasks.vision)
-
+    implementation(libs.litert)
     implementation(libs.coroutines.android)
     implementation(libs.hilt.android)       // ← add
     ksp(libs.hilt.compiler)

@@ -37,8 +37,16 @@ enum class FaceModelRange {
     /** ~5 m, 192px input — better for street/scene recording; slightly heavier. */
     FULL_RANGE
 }
+enum class DetectorBackend {
+    /** Fine-tuned YOLO (faces + plates, one model, long-range). */
+    YOLO,
+
+    /** MediaPipe BlazeFace short-range (faces only). Kept as fallback. */
+    MEDIAPIPE
+}
 
 data class DetectorConfig(
+    val backend: DetectorBackend = DetectorBackend.YOLO,
     val delegate: DetectorDelegate = DetectorDelegate.CPU,
     val minConfidence: Float = 0.5f,
     val faceModelRange: FaceModelRange = FaceModelRange.FULL_RANGE

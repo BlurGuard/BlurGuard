@@ -11,8 +11,10 @@ import com.nash.core.domain.CameraSession
 import com.nash.core.domain.DefaultAnonymizationEngine
 import com.nash.core.domain.DefaultAnonymizationPipeline
 import com.nash.core.ml.MediaPipeFaceDetector
+import com.nash.core.ml.YoloDetector
 import com.nash.core.model.AnonymizationEngine
 import com.nash.core.model.Detector
+import com.nash.core.model.DetectorBackend
 import com.nash.core.model.DetectorConfig
 import com.nash.core.model.DetectorDelegate
 import com.nash.core.model.FaceModelRange
@@ -63,11 +65,7 @@ abstract class AppModule {
         controller: CameraXCameraController
     ): FrameSource<ImageProxy>
 
-    @Binds
-    @FaceDetection
-    abstract fun bindFaceDetector(
-        detector: MediaPipeFaceDetector
-    ): Detector<ImageProxy>
+
 
     companion object {
         /**
@@ -78,8 +76,8 @@ abstract class AppModule {
         @Provides
         @Singleton
         fun provideDetectorConfig(): DetectorConfig = DetectorConfig(
-            delegate = DetectorDelegate.CPU,
-            minConfidence = 0.5f,
+            delegate = DetectorDelegate.GPU,
+            minConfidence = 0.25f,
             faceModelRange = FaceModelRange.SHORT_RANGE
         )
 
@@ -91,15 +89,20 @@ abstract class AppModule {
         @Singleton
         fun provideAnonymizationEngine(
             frameSource: @JvmSuppressWildcards FrameSource<ImageProxy>,
-            @FaceDetection faceDetector: @JvmSuppressWildcards Detector<ImageProxy>,
+            yoloDetector: YoloDetector,
+            mediaPipeFaceDetector: MediaPipeFaceDetector,
+            config: DetectorConfig,
             tracker: Tracker
-        ): AnonymizationEngine = DefaultAnonymizationEngine(
-            frameSource = frameSource,
-            pipeline = DefaultAnonymizationPipeline(
-                detectors = listOf(faceDetector),
-                tracker = tracker
+        ): AnonymizationEngine {
+            val detectors: List<Detector<ImageProxy>> = when (config.backend) {
+                DetectorBackend.YOLO -> listOf(yoloDetector)
+                DetectorBackend.MEDIAPIPE -> listOf(mediaPipeFaceDetector)
+            }
+            return DefaultAnonymizationEngine(
+                frameSource = frameSource,
+                pipeline = DefaultAnonymizationPipeline(detectors, tracker)
             )
-        )
+        }
     }
 
     @Binds
