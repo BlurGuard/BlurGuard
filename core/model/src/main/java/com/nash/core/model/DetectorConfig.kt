@@ -17,7 +17,11 @@ enum class DetectorDelegate {
      * GPU inference. Only use if benchmarks show CPU is too slow AND the
      * measured contention with the core/blurring renderer is acceptable.
      */
-    GPU
+    GPU,
+
+
+    /** NNAPI: lets the vendor driver place ops on NPU/DSP. Deprecated API, best-effort. */
+    NPU
 }
 
 /**
@@ -47,7 +51,7 @@ enum class DetectorBackend {
 
 data class DetectorConfig(
     val backend: DetectorBackend = DetectorBackend.YOLO,
-    val delegate: DetectorDelegate = DetectorDelegate.CPU,
-    val minConfidence: Float = 0.5f,
+    val delegate: DetectorDelegate = DetectorDelegate.NPU,
+    val minConfidence: Float = 0.1f,
     val faceModelRange: FaceModelRange = FaceModelRange.FULL_RANGE
 )

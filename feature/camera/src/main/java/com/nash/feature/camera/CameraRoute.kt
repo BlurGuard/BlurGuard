@@ -68,7 +68,7 @@ fun CameraRoute(
         }
     }
     val trackedBoxes by viewModel.trackedBoxes.collectAsStateWithLifecycle()
-
+    val pipelineStats by viewModel.pipelineStats.collectAsStateWithLifecycle()
     CameraScreen(
         uiState = uiState,
         previewFactory = viewModel.previewFactory,
@@ -77,5 +77,6 @@ fun CameraRoute(
         onRequestPermissions = { permissions.launchMultiplePermissionRequest() },
         onDismissError = { viewModel.onEvent(CameraEvent.OnErrorDismissed) },
         trackedBoxes = trackedBoxes,
+        stats = pipelineStats
     )
 }

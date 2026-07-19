@@ -18,9 +18,9 @@ package com.nash.core.model
  * motion model (0 = use only the newest velocity, closer to 1 = smoother).
  */
 data class TrackerConfig(
-    val highScoreThreshold: Float = 0.6f,
+    val highScoreThreshold: Float = 0.45f,
     val lowScoreThreshold: Float = 0.1f,
-    val iouThreshold: Float = 0.3f,
-    val maxLostFrames: Long = 5L,
-    val velocitySmoothing: Float = 0.85f
+    val iouThreshold: Float = 0.1f,
+    val maxLostFrames: Long = 3L,
+    val velocitySmoothing: Float = 0.9f
 )

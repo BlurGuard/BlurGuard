@@ -18,9 +18,16 @@ interface AnonymizationEngine {
      */
     val trackedBoxes: StateFlow<List<TrackedBox>>
 
+
+    /** Live pipeline performance counters (debug). */
+    val stats: StateFlow<PipelineStats>
+
+
     /** Starts consuming frames. Resets tracking state from any previous session. */
     fun start()
 
     /** Stops consuming frames and clears tracking state. */
     fun stop()
+
+
 }

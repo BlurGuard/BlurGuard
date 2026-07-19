@@ -3,6 +3,7 @@ package com.nash.core.domain
 import com.nash.core.model.Detector
 import com.nash.core.model.FrameConsumer
 import com.nash.core.model.FrameMetadata
+import com.nash.core.model.PipelineStats
 import com.nash.core.model.TrackedBox
 import com.nash.core.model.Tracker
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,18 +32,44 @@ class DefaultAnonymizationPipeline<F>(
     private val _trackedBoxes = MutableStateFlow<List<TrackedBox>>(emptyList())
     val trackedBoxes: StateFlow<List<TrackedBox>> = _trackedBoxes.asStateFlow()
 
+
+    private val _stats = MutableStateFlow(PipelineStats())
+    val stats: StateFlow<PipelineStats> = _stats.asStateFlow()
+
+    private var windowStartNanos = 0L
+    private var windowFrameCount = 0
     override suspend fun onFrame(frame: F, metadata: FrameMetadata) {
-        // Sequentially run every detector (face today, plates later) on the frame.
+        val startNanos = System.nanoTime()
+
         val detections = detectors.flatMap { detector ->
-            detector.detect(frame, metadata)
+            try {
+                detector.detect(frame, metadata)
+            } catch (e: Exception) {
+                emptyList()
+            }
         }
-        // Tracker smooths, interpolates, and assigns stable IDs — including
-        // coasting boxes for briefly-missed objects (privacy-first).
         _trackedBoxes.value = tracker.update(detections, metadata)
+
+        // --- Perf counters: 1-second window over processed frames.
+        val latencyMillis = (System.nanoTime() - startNanos) / 1_000_000
+        if (windowStartNanos == 0L) windowStartNanos = startNanos
+        windowFrameCount++
+        val windowNanos = System.nanoTime() - windowStartNanos
+        if (windowNanos >= 1_000_000_000L) {
+            _stats.value = PipelineStats(
+                fps = windowFrameCount * 1_000_000_000f / windowNanos,
+                detectionLatencyMillis = latencyMillis
+            )
+            windowStartNanos = System.nanoTime()
+            windowFrameCount = 0
+        }
     }
 
     fun reset() {
         tracker.reset()
         _trackedBoxes.value = emptyList()
+        _stats.value = PipelineStats()
+        windowStartNanos = 0L
+        windowFrameCount = 0
     }
 }

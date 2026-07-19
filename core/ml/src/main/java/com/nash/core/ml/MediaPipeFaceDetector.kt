@@ -65,6 +65,7 @@ class MediaPipeFaceDetector @Inject constructor(
         val preferred = when (config.delegate) {
             DetectorDelegate.CPU -> Delegate.CPU
             DetectorDelegate.GPU -> Delegate.GPU
+            DetectorDelegate.NPU -> Delegate.GPU
         }
 
         return try {

@@ -15,6 +15,7 @@ import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -158,9 +159,17 @@ class CameraXCameraController @Inject constructor(
                 }
                 cameraProvider = provider
 
-                val preview = Preview.Builder().build().also {
-                    previewUseCase = it
-                }
+                val preview = Preview.Builder()
+                    .setResolutionSelector(
+                        ResolutionSelector.Builder()
+                            .setAspectRatioStrategy(
+                                AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY
+                            )
+                            .build()
+                    )
+                    .build().also {
+                        previewUseCase = it
+                    }
                 attachSurfaceProviderIfReady()
 
                 val recorderInstance = Recorder.Builder()

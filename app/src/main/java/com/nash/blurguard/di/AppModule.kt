@@ -76,7 +76,7 @@ abstract class AppModule {
         @Provides
         @Singleton
         fun provideDetectorConfig(): DetectorConfig = DetectorConfig(
-            delegate = DetectorDelegate.GPU,
+            delegate = DetectorDelegate.NPU,
             minConfidence = 0.25f,
             faceModelRange = FaceModelRange.SHORT_RANGE
         )

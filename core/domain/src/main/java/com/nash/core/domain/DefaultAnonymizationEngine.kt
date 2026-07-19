@@ -2,6 +2,7 @@ package com.nash.core.domain
 
 import com.nash.core.model.AnonymizationEngine
 import com.nash.core.model.FrameSource
+import com.nash.core.model.PipelineStats
 import com.nash.core.model.TrackedBox
 import kotlinx.coroutines.flow.StateFlow
 
@@ -20,6 +21,8 @@ class DefaultAnonymizationEngine<F>(
     override val trackedBoxes: StateFlow<List<TrackedBox>>
         get() = pipeline.trackedBoxes
 
+    override val stats: StateFlow<PipelineStats>
+        get() = pipeline.stats
     override fun start() {
         pipeline.reset()
         frameSource.setFrameConsumer(pipeline)
