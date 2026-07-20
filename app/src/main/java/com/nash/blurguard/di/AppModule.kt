@@ -1,16 +1,34 @@
 package com.nash.blurguard.di
 
+import androidx.camera.core.ImageProxy
 import com.nash.core.camera.CameraXCameraController
 import com.nash.core.common.DefaultDispatcherProvider
 import com.nash.core.common.DispatcherProvider
+import com.nash.core.common.di.FaceDetection
 import com.nash.core.domain.CameraControllerAdapter
 import com.nash.core.domain.CameraPreviewFactory
 import com.nash.core.domain.CameraSession
+import com.nash.core.domain.DefaultAnonymizationEngine
+import com.nash.core.domain.DefaultAnonymizationPipeline
+import com.nash.core.ml.MediaPipeFaceDetector
+import com.nash.core.ml.YoloDetector
+import com.nash.core.model.AnonymizationEngine
+import com.nash.core.model.Detector
+import com.nash.core.model.DetectorBackend
+import com.nash.core.model.DetectorConfig
+import com.nash.core.model.DetectorDelegate
+import com.nash.core.model.FaceModelRange
+import com.nash.core.model.FrameSource
+import com.nash.core.model.Tracker
+import com.nash.core.model.TrackerConfig
 import com.nash.core.model.VideoRecorder
+import com.nash.core.tracking.ByteTrackTracker
 import dagger.Binds
 import dagger.Module
+import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import javax.inject.Singleton
 
 /**
  * Application-wide Hilt module.
@@ -41,4 +59,56 @@ abstract class AppModule {
     abstract fun bindCameraPreviewFactory(
         adapter: CameraControllerAdapter
     ): CameraPreviewFactory
+
+    @Binds
+    abstract fun bindFrameSource(
+        controller: CameraXCameraController
+    ): FrameSource<ImageProxy>
+
+
+
+    companion object {
+        /**
+         * Detection accelerator policy: CPU by default so the GPU stays
+         * dedicated to the anonymization renderer (NFR-02). Revisit only
+         * with benchmark evidence.
+         */
+        @Provides
+        @Singleton
+        fun provideDetectorConfig(): DetectorConfig = DetectorConfig(
+            delegate = DetectorDelegate.NPU,
+            minConfidence = 0.25f,
+            faceModelRange = FaceModelRange.SHORT_RANGE
+        )
+
+        @Provides
+        @Singleton
+        fun provideTrackerConfig(): TrackerConfig = TrackerConfig()
+
+        @Provides
+        @Singleton
+        fun provideAnonymizationEngine(
+            frameSource: @JvmSuppressWildcards FrameSource<ImageProxy>,
+            yoloDetector: YoloDetector,
+            mediaPipeFaceDetector: MediaPipeFaceDetector,
+            config: DetectorConfig,
+            tracker: Tracker
+        ): AnonymizationEngine {
+            val detectors: List<Detector<ImageProxy>> = when (config.backend) {
+                DetectorBackend.YOLO -> listOf(yoloDetector)
+                DetectorBackend.MEDIAPIPE -> listOf(mediaPipeFaceDetector)
+            }
+            return DefaultAnonymizationEngine(
+                frameSource = frameSource,
+                pipeline = DefaultAnonymizationPipeline(detectors, tracker)
+            )
+        }
+    }
+
+    @Binds
+    abstract fun bindTracker(
+        tracker: ByteTrackTracker
+    ): Tracker
+
+
 }

@@ -28,7 +28,7 @@ dependencies {
     implementation(project(":core:data"))
     implementation(project(":core:model"))
     implementation(project(":core:common"))
-
+    implementation("javax.inject:javax.inject:1")
     implementation(libs.androidx.core.ktx)
 
     // Coroutines + Lifecycle
@@ -39,4 +39,8 @@ dependencies {
     // Hilt
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
+
+    // Unit tests
+    testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
 }

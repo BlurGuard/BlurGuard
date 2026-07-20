@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -31,12 +32,16 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.nash.core.domain.CameraPreviewFactory
+import com.nash.core.model.PipelineStats
 import com.nash.core.model.RecordingState
+import com.nash.core.model.TrackedBox
+import com.nash.feature.camera.components.TrackingOverlay
 
 /**
  * Camera recording screen.
  *
- * Displays the camera preview, record/stop controls, and status information.
+ * Displays the camera preview, record/stop controls, status information, and
+ * the debug tracking overlay (boxes following detected faces/plates).
  * The preview is rendered via an [AndroidView] using the domain-layer
  * [CameraPreviewFactory] so this module never imports CameraX directly.
  */
@@ -44,10 +49,12 @@ import com.nash.core.model.RecordingState
 fun CameraScreen(
     uiState: CameraUiState,
     previewFactory: CameraPreviewFactory,
+    trackedBoxes: List<TrackedBox>,
     onRecordClick: () -> Unit,
     onStopClick: () -> Unit,
     onRequestPermissions: () -> Unit,
-    onDismissError: () -> Unit
+    onDismissError: () -> Unit,
+    stats: PipelineStats,
 ) {
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
@@ -63,6 +70,7 @@ fun CameraScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { paddingValues ->
         Box(
+
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
@@ -79,11 +87,30 @@ fun CameraScreen(
                     modifier = Modifier.fillMaxSize()
                 )
 
+                // Debug overlay: must sit directly on top of the preview and
+                // share its exact bounds so normalized coords line up.
+                TrackingOverlay(
+                    trackedBoxes = trackedBoxes,
+                    modifier = Modifier.fillMaxSize(),
+                )
+
                 RecordingOverlay(
                     uiState = uiState,
                     modifier = Modifier.align(Alignment.TopCenter)
                 )
-
+                Text(
+                    text = "%.0f fps · det %.1f/s · %d ms".format(
+                        stats.frameFps, stats.fps, stats.detectionLatencyMillis
+                    ),
+                    color = Color.Green,
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .statusBarsPadding()
+                        .padding(8.dp)
+                        .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                )
                 Controls(
                     isRecording = uiState.isRecording,
                     isBusy = uiState.isStartingOrStopping,

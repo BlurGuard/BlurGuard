@@ -6,14 +6,20 @@ import androidx.lifecycle.viewModelScope
 import com.nash.core.common.DispatcherProvider
 import com.nash.core.domain.usecase.BindCameraUseCase
 import com.nash.core.domain.usecase.GetCameraPreviewFactoryUseCase
+import com.nash.core.domain.usecase.ObservePipelineStatsUseCase
 import com.nash.core.domain.usecase.ObserveRecordingStateUseCase
+import com.nash.core.domain.usecase.ObserveTrackedBoxesUseCase
+import com.nash.core.domain.usecase.StartAnonymizationUseCase
 import com.nash.core.domain.usecase.StartRecordingUseCase
+import com.nash.core.domain.usecase.StopAnonymizationUseCase
 import com.nash.core.domain.usecase.StopRecordingUseCase
 import com.nash.core.domain.usecase.UnbindCameraUseCase
+import com.nash.core.model.PipelineStats
 import com.nash.core.model.RecordingConfig
 import com.nash.core.model.RecordingStartResult
 import com.nash.core.model.RecordingState
 import com.nash.core.model.RecordingStopResult
+import com.nash.core.model.TrackedBox
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Job
@@ -32,11 +38,22 @@ class CameraViewModel @Inject constructor(
     private val startRecordingUseCase: StartRecordingUseCase,
     private val stopRecordingUseCase: StopRecordingUseCase,
     observeRecordingStateUseCase: ObserveRecordingStateUseCase,
-    private val dispatcherProvider: DispatcherProvider
+    private val startAnonymizationUseCase: StartAnonymizationUseCase,
+    private val stopAnonymizationUseCase: StopAnonymizationUseCase,
+    observeTrackedBoxesUseCase: ObserveTrackedBoxesUseCase,
+    private val dispatcherProvider: DispatcherProvider,
+    observePipelineStatsUseCase: ObservePipelineStatsUseCase,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(CameraUiState())
     val uiState: StateFlow<CameraUiState> = _uiState.asStateFlow()
+    val pipelineStats: StateFlow<PipelineStats> = observePipelineStatsUseCase()
+    /**
+     * Latest tracked boxes from the detection & tracking pipeline, normalized
+     * to the upright analysis frame. Metadata only — frames never reach the
+     * ViewModel (architecture invariant).
+     */
+    val trackedBoxes: StateFlow<List<TrackedBox>> = observeTrackedBoxesUseCase()
 
     val previewFactory = getCameraPreviewFactoryUseCase()
 
@@ -66,9 +83,13 @@ class CameraViewModel @Inject constructor(
 
     fun bindCamera(lifecycleOwner: LifecycleOwner) {
         bindCameraUseCase(lifecycleOwner)
+        // Frames only flow while the camera is bound, so the pipeline's
+        // lifecycle is tied to the camera's.
+        startAnonymizationUseCase()
     }
 
     fun unbindCamera() {
+        stopAnonymizationUseCase()
         unbindCameraUseCase()
     }
 

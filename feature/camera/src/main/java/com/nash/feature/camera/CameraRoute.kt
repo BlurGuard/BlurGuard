@@ -67,13 +67,16 @@ fun CameraRoute(
             viewModel.onEvent(CameraEvent.OnAudioPermissionDenied)
         }
     }
-
+    val trackedBoxes by viewModel.trackedBoxes.collectAsStateWithLifecycle()
+    val pipelineStats by viewModel.pipelineStats.collectAsStateWithLifecycle()
     CameraScreen(
         uiState = uiState,
         previewFactory = viewModel.previewFactory,
         onRecordClick = { viewModel.onEvent(CameraEvent.OnRecordClicked) },
         onStopClick = { viewModel.onEvent(CameraEvent.OnStopRecordingClicked) },
         onRequestPermissions = { permissions.launchMultiplePermissionRequest() },
-        onDismissError = { viewModel.onEvent(CameraEvent.OnErrorDismissed) }
+        onDismissError = { viewModel.onEvent(CameraEvent.OnErrorDismissed) },
+        trackedBoxes = trackedBoxes,
+        stats = pipelineStats
     )
 }
