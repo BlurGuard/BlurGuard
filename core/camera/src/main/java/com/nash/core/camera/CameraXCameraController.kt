@@ -368,7 +368,7 @@ class CameraXCameraController @Inject constructor(
     private fun attachSurfaceProviderIfReady() {
         val view = previewView ?: return
         val preview = previewUseCase ?: return
-        preview.setSurfaceProvider(view.surfaceProvider)
+        preview.surfaceProvider = view.surfaceProvider
     }
 
     private fun generateFilename(prefix: String): String {

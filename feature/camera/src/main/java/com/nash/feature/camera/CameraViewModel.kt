@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.time.Duration.Companion.milliseconds
 
 @HiltViewModel
 class CameraViewModel @Inject constructor(
@@ -37,12 +38,12 @@ class CameraViewModel @Inject constructor(
     private val getCameraPreviewFactoryUseCase: GetCameraPreviewFactoryUseCase,
     private val startRecordingUseCase: StartRecordingUseCase,
     private val stopRecordingUseCase: StopRecordingUseCase,
-    observeRecordingStateUseCase: ObserveRecordingStateUseCase,
+    private val observeRecordingStateUseCase: ObserveRecordingStateUseCase,
     private val startAnonymizationUseCase: StartAnonymizationUseCase,
     private val stopAnonymizationUseCase: StopAnonymizationUseCase,
-    observeTrackedBoxesUseCase: ObserveTrackedBoxesUseCase,
+    private val observeTrackedBoxesUseCase: ObserveTrackedBoxesUseCase,
     private val dispatcherProvider: DispatcherProvider,
-    observePipelineStatsUseCase: ObservePipelineStatsUseCase,
+    private val observePipelineStatsUseCase: ObservePipelineStatsUseCase,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(CameraUiState())
@@ -165,7 +166,7 @@ class CameraViewModel @Inject constructor(
             while (true) {
                 val elapsed = System.currentTimeMillis() - startedAtMillis
                 _uiState.update { it.copy(durationSeconds = (elapsed / 1000).toInt()) }
-                kotlinx.coroutines.delay(1000)
+                kotlinx.coroutines.delay(1000.milliseconds)
             }
         }
     }

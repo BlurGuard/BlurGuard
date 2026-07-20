@@ -24,6 +24,7 @@ import kotlin.math.round
 import kotlinx.coroutines.withContext
 import org.tensorflow.lite.Interpreter
 import org.tensorflow.lite.nnapi.NnApiDelegate
+import androidx.core.graphics.createBitmap
 
 /**
  * Fine-tuned YOLO detector (faces + license plates, single model) running on
@@ -128,7 +129,7 @@ class YoloDetector @Inject constructor(
         val padX = (INPUT_SIZE - scaledWidth) / 2f
         val padY = (INPUT_SIZE - scaledHeight) / 2f
 
-        val input = Bitmap.createBitmap(INPUT_SIZE, INPUT_SIZE, Bitmap.Config.ARGB_8888)
+        val input = createBitmap(INPUT_SIZE, INPUT_SIZE)
         Canvas(input).apply {
             drawColor(Color.rgb(114, 114, 114))
             drawBitmap(
@@ -227,8 +228,8 @@ class YoloDetector @Inject constructor(
 
         /** Class order MUST match the training data.yaml. */
         val CLASSES = listOf(
-            DetectionClass.FACE,          // index 0
-            DetectionClass.LICENSE_PLATE  // index 1
+            DetectionClass.LICENSE_PLATE,          // index 0
+            DetectionClass.FACE  // index 1
         )
     }
 
