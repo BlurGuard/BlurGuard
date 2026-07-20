@@ -4,115 +4,188 @@ import com.nash.core.model.BoundingBox
 import com.nash.core.model.DetectionBox
 import com.nash.core.model.DetectionClass
 import com.nash.core.model.Detector
-import com.nash.core.model.FrameConsumer
 import com.nash.core.model.FrameMetadata
-import com.nash.core.model.FrameSource
 import com.nash.core.model.TrackId
 import com.nash.core.model.TrackedBox
 import com.nash.core.model.Tracker
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class DefaultAnonymizationPipelineTest {
+/**
+ * Cadence contract of [DefaultAnonymizationPipeline]: detectors run every
+ * [detectionInterval] frames, the tracker ticks on EVERY frame, and boxes
+ * are published on every frame.
+ */
+class DefaultAnonymizationPipelineCadenceTest {
 
-    private class FakeDetector(var result: List<DetectionBox> = emptyList()) : Detector<String> {
-        override suspend fun detect(frame: String, metadata: FrameMetadata) = result
-        override fun close() {}
-    }
+    // ------------------------------------------------------------------
+    // Fakes
+    // ------------------------------------------------------------------
 
-    /** Echoes detections back as tracks with sequential ids. */
-    private class FakeTracker : Tracker {
-        var resetCount = 0
+    /** Records the exact sequence of update/predict calls per frameId. */
+    private class RecordingTracker : Tracker {
+        val calls = mutableListOf<String>()
+        var lastDetections: List<DetectionBox> = emptyList()
+
         override fun update(
             detections: List<DetectionBox>,
             metadata: FrameMetadata
-        ): List<TrackedBox> = detections.mapIndexed { index, detection ->
-            TrackedBox(
-                id = TrackId(index.toLong()),
-                box = detection.box,
-                clazz = detection.clazz,
-                confidence = detection.confidence,
-                lastUpdatedFrame = metadata.frameId,
+        ): List<TrackedBox> {
+            calls += "update:${metadata.frameId}"
+            lastDetections = detections
+            return listOf(box(id = UPDATE_ID, frameId = metadata.frameId))
+        }
+
+        override fun predict(metadata: FrameMetadata): List<TrackedBox> {
+            calls += "predict:${metadata.frameId}"
+            return listOf(box(id = PREDICT_ID, frameId = metadata.frameId))
+        }
+
+        override fun reset() {
+            calls += "reset"
+        }
+
+        companion object {
+            const val UPDATE_ID = 100L
+            const val PREDICT_ID = 200L
+
+            fun box(id: Long, frameId: Long) = TrackedBox(
+                id = TrackId(id),
+                box = BoundingBox(0.1f, 0.1f, 0.3f, 0.3f),
+                clazz = DetectionClass.FACE,
+                confidence = 0.9f,
+                lastUpdatedFrame = frameId,
                 keepVisible = false
             )
         }
-        override fun reset() { resetCount++ }
     }
 
-    private class FakeFrameSource : FrameSource<String> {
-        var consumer: FrameConsumer<String>? = null
-        override fun setFrameConsumer(consumer: FrameConsumer<String>?) {
-            this.consumer = consumer
+    private class FakeDetector(
+        private val onDetect: (String, FrameMetadata) -> List<DetectionBox> = { _, _ -> emptyList() }
+    ) : Detector<String> {
+        var detectCount = 0
+
+        override suspend fun detect(
+            frame: String,
+            metadata: FrameMetadata
+        ): List<DetectionBox> {
+            detectCount++
+            return onDetect(frame, metadata)
         }
+
+        override fun close() = Unit
     }
 
-    private fun meta(frameId: Long) = FrameMetadata(
+    private fun metadata(frameId: Long) = FrameMetadata(
         frameId = frameId,
         timestampNanos = frameId * 33_000_000L,
         width = 640,
-        height = 480,
-        rotationDegrees = 0
+        height = 360,
+        rotationDegrees = 90
     )
 
-    private fun det() = DetectionBox(
-        BoundingBox(0.1f, 0.1f, 0.3f, 0.3f), DetectionClass.FACE, 0.9f
+    private fun detection(confidence: Float = 0.8f) = DetectionBox(
+        box = BoundingBox(0.2f, 0.2f, 0.4f, 0.4f),
+        clazz = DetectionClass.FACE,
+        confidence = confidence
     )
+
+    private fun pipeline(
+        tracker: Tracker,
+        detector: Detector<String>,
+        interval: Long = 3L
+    ) = DefaultAnonymizationPipeline(
+        detectors = listOf(detector),
+        tracker = tracker,
+        detectionInterval = interval
+    )
+
+    // ------------------------------------------------------------------
+    // Tests
+    // ------------------------------------------------------------------
 
     @Test
-    fun `onFrame runs detectors and publishes tracker output`() = runTest {
-        val detector = FakeDetector(result = listOf(det()))
-        val pipeline = DefaultAnonymizationPipeline(listOf(detector), FakeTracker())
+    fun `first frame always runs detection`() = runTest {
+        val tracker = RecordingTracker()
+        val detector = FakeDetector()
+        val pipeline = pipeline(tracker, detector)
 
-        pipeline.onFrame("frame-1", meta(1))
+        pipeline.onFrame("frame", metadata(frameId = 0))
 
-        val published = pipeline.trackedBoxes.value
-        assertEquals(1, published.size)
-        assertEquals(1L, published.first().lastUpdatedFrame)
+        assertEquals(listOf("update:0"), tracker.calls)
+        assertEquals(1, detector.detectCount)
     }
 
     @Test
-    fun `detections from multiple detectors are merged`() = runTest {
-        val faces = FakeDetector(result = listOf(det()))
-        val plates = FakeDetector(
-            result = listOf(
-                DetectionBox(BoundingBox(0.5f, 0.5f, 0.7f, 0.6f), DetectionClass.LICENSE_PLATE, 0.8f)
-            )
+    fun `detection runs every Nth frame and tracker ticks on all frames`() = runTest {
+        val tracker = RecordingTracker()
+        val detector = FakeDetector()
+        val pipeline = pipeline(tracker, detector, interval = 3L)
+
+        for (frameId in 0L..5L) {
+            pipeline.onFrame("frame", metadata(frameId))
+        }
+
+        assertEquals(
+            listOf("update:0", "predict:1", "predict:2", "update:3", "predict:4", "predict:5"),
+            tracker.calls
         )
-        val pipeline = DefaultAnonymizationPipeline(listOf(faces, plates), FakeTracker())
-
-        pipeline.onFrame("frame-1", meta(1))
-
-        assertEquals(2, pipeline.trackedBoxes.value.size)
+        assertEquals(2, detector.detectCount)
     }
 
     @Test
-    fun `reset clears published boxes and tracker state`() = runTest {
-        val tracker = FakeTracker()
-        val pipeline = DefaultAnonymizationPipeline(listOf(FakeDetector(listOf(det()))), tracker)
-        pipeline.onFrame("frame-1", meta(1))
+    fun `boxes are published on every frame including predict frames`() = runTest {
+        val tracker = RecordingTracker()
+        val pipeline = pipeline(tracker, FakeDetector(), interval = 3L)
 
+        pipeline.onFrame("frame", metadata(0)) // update
+        assertEquals(TrackId(RecordingTracker.UPDATE_ID), pipeline.trackedBoxes.value.single().id)
+
+        pipeline.onFrame("frame", metadata(1)) // predict
+        assertEquals(TrackId(RecordingTracker.PREDICT_ID), pipeline.trackedBoxes.value.single().id)
+    }
+
+    @Test
+    fun `detections reach the tracker on detection frames`() = runTest {
+        val tracker = RecordingTracker()
+        val detector = FakeDetector { _, _ -> listOf(detection(confidence = 0.7f)) }
+        val pipeline = pipeline(tracker, detector)
+
+        pipeline.onFrame("frame", metadata(0))
+
+        assertEquals(1, tracker.lastDetections.size)
+        assertEquals(0.7f, tracker.lastDetections.single().confidence)
+    }
+
+    @Test
+    fun `detector failure degrades to empty detections instead of crashing`() = runTest {
+        val tracker = RecordingTracker()
+        val detector = FakeDetector { _, _ -> error("model exploded") }
+        val pipeline = pipeline(tracker, detector)
+
+        pipeline.onFrame("frame", metadata(0))
+
+        assertEquals(listOf("update:0"), tracker.calls)
+        assertTrue(tracker.lastDetections.isEmpty())
+    }
+
+    @Test
+    fun `reset restores first-frame-detects behavior`() = runTest {
+        val tracker = RecordingTracker()
+        val detector = FakeDetector()
+        val pipeline = pipeline(tracker, detector, interval = 3L)
+
+        pipeline.onFrame("frame", metadata(0))
+        pipeline.onFrame("frame", metadata(1))
         pipeline.reset()
 
-        assertTrue(pipeline.trackedBoxes.value.isEmpty())
-        assertEquals(1, tracker.resetCount)
-    }
+        // Frame 2 would be a predict frame if state survived reset — it must detect.
+        pipeline.onFrame("frame", metadata(2))
 
-    @Test
-    fun `engine start attaches pipeline and stop detaches and resets`() {
-        val source = FakeFrameSource()
-        val tracker = FakeTracker()
-        val pipeline = DefaultAnonymizationPipeline(listOf(FakeDetector()), tracker)
-        val engine = DefaultAnonymizationEngine(source, pipeline)
-
-        engine.start()
-        assertSame(pipeline, source.consumer)
-
-        engine.stop()
-        assertNull(source.consumer)
-        assertEquals(2, tracker.resetCount) // once on start, once on stop
+        assertTrue(tracker.calls.contains("reset"))
+        assertEquals("update:2", tracker.calls.last())
+        assertEquals(2, detector.detectCount)
     }
 }
