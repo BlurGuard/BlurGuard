@@ -22,4 +22,7 @@ interface Tracker {
      * Resets internal tracking state (e.g., when a recording session ends or camera restarts).
      */
     fun reset()
+
+
+    fun predict(metadata: FrameMetadata): List<TrackedBox>
 }

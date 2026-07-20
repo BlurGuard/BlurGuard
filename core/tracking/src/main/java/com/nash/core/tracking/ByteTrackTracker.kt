@@ -95,6 +95,16 @@ class ByteTrackTracker @Inject constructor(
         nextId = 1L
     }
 
+    override fun predict(metadata: FrameMetadata): List<TrackedBox> {
+        val frameId = metadata.frameId
+        tracks.forEach { it.predictTo(frameId) }
+        // Same expiry rule as update(): a stalled detector must not leave
+        // ghost boxes coasting forever.
+        tracks.removeAll { frameId - it.lastUpdatedFrame > config.maxLostFrames }
+        return tracks.map { it.toTrackedBox() }
+    }
+
+
     // ------------------------------------------------------------------
     // Association
     // ------------------------------------------------------------------

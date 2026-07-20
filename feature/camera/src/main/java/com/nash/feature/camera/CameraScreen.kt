@@ -99,7 +99,9 @@ fun CameraScreen(
                     modifier = Modifier.align(Alignment.TopCenter)
                 )
                 Text(
-                    text = "%.1f fps · %d ms".format(stats.fps, stats.detectionLatencyMillis),
+                    text = "%.0f fps · det %.1f/s · %d ms".format(
+                        stats.frameFps, stats.fps, stats.detectionLatencyMillis
+                    ),
                     color = Color.Green,
                     style = MaterialTheme.typography.labelMedium,
                     modifier = Modifier

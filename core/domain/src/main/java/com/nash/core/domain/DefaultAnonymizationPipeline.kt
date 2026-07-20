@@ -1,5 +1,6 @@
 package com.nash.core.domain
 
+import android.util.Log
 import com.nash.core.model.Detector
 import com.nash.core.model.FrameConsumer
 import com.nash.core.model.FrameMetadata
@@ -26,9 +27,11 @@ import kotlinx.coroutines.flow.asStateFlow
  */
 class DefaultAnonymizationPipeline<F>(
     private val detectors: List<Detector<F>>,
-    private val tracker: Tracker
+    private val tracker: Tracker,
+    private val detectionInterval: Long = 2L
 ) : FrameConsumer<F> {
 
+    private var lastDetectionFrameId = -1L
     private val _trackedBoxes = MutableStateFlow<List<TrackedBox>>(emptyList())
     val trackedBoxes: StateFlow<List<TrackedBox>> = _trackedBoxes.asStateFlow()
 
@@ -38,38 +41,53 @@ class DefaultAnonymizationPipeline<F>(
 
     private var windowStartNanos = 0L
     private var windowFrameCount = 0
+    private var windowDetectionCount = 0
+    private var lastDetectionLatencyMillis = 0L
     override suspend fun onFrame(frame: F, metadata: FrameMetadata) {
         val startNanos = System.nanoTime()
+        val detectionDue = lastDetectionFrameId < 0 ||
+                metadata.frameId - lastDetectionFrameId >= detectionInterval
 
-        val detections = detectors.flatMap { detector ->
-            try {
-                detector.detect(frame, metadata)
-            } catch (e: Exception) {
-                emptyList()
+        if (detectionDue) {
+            lastDetectionFrameId = metadata.frameId
+            val detections = detectors.flatMap { detector ->
+                try {
+                    detector.detect(frame, metadata)
+                } catch (e: Exception) {
+                    emptyList()
+                }
             }
+            _trackedBoxes.value = tracker.update(detections, metadata)
+            lastDetectionLatencyMillis = (System.nanoTime() - startNanos) / 1_000_000
+            windowDetectionCount++
+        } else {
+            _trackedBoxes.value = tracker.predict(metadata)
         }
-        _trackedBoxes.value = tracker.update(detections, metadata)
 
-        // --- Perf counters: 1-second window over processed frames.
-        val latencyMillis = (System.nanoTime() - startNanos) / 1_000_000
+        // --- Perf counters: 1-second window over ALL processed frames.
         if (windowStartNanos == 0L) windowStartNanos = startNanos
         windowFrameCount++
         val windowNanos = System.nanoTime() - windowStartNanos
         if (windowNanos >= 1_000_000_000L) {
             _stats.value = PipelineStats(
-                fps = windowFrameCount * 1_000_000_000f / windowNanos,
-                detectionLatencyMillis = latencyMillis
+                frameFps = windowFrameCount * 1_000_000_000f / windowNanos,
+                fps = windowDetectionCount * 1_000_000_000f / windowNanos,
+                detectionLatencyMillis = lastDetectionLatencyMillis
             )
             windowStartNanos = System.nanoTime()
             windowFrameCount = 0
+            windowDetectionCount = 0
         }
     }
 
     fun reset() {
         tracker.reset()
+        lastDetectionFrameId = -1L
         _trackedBoxes.value = emptyList()
         _stats.value = PipelineStats()
         windowStartNanos = 0L
         windowFrameCount = 0
+        windowDetectionCount = 0
+        lastDetectionLatencyMillis = 0L
     }
 }
