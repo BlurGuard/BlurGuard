@@ -10,11 +10,13 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.util.Size
 import android.view.View
+import androidx.camera.core.CameraEffect
 import androidx.core.content.ContextCompat
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
+import androidx.camera.core.UseCaseGroup
 import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
@@ -80,7 +82,8 @@ import kotlinx.coroutines.withContext
 @Singleton
 class CameraXCameraController @Inject constructor(
     @param:ApplicationContext private val context: Context,
-    private val dispatcherProvider: DispatcherProvider
+    private val dispatcherProvider: DispatcherProvider,
+    private val anonymizationEffect: CameraEffect,
 ) : VideoRecorder, FrameSource<ImageProxy> {
 
     private val controllerScope = CoroutineScope(
@@ -222,14 +225,19 @@ class CameraXCameraController @Inject constructor(
                         }
                     }
                 }
+                val useCaseGroup = UseCaseGroup.Builder()
+                    .addUseCase(preview)
+                    .addUseCase(videoCaptureInstance)
+                    .addUseCase(imageAnalysisInstance)
+                    .addEffect(anonymizationEffect)          // preview + recording now anonymized
+                    .build()
 
                 provider.bindToLifecycle(
                     lifecycleOwner,
-                    CameraSelector.DEFAULT_BACK_CAMERA,
-                    preview,
-                    videoCaptureInstance,
-                    imageAnalysisInstance
+                    CameraSelector.DEFAULT_BACK_CAMERA,      // keep whatever selector you use today
+                    useCaseGroup,
                 )
+
             } catch (e: Exception) {
                 _recordingState.value = RecordingState.Error(
                     message = e.message ?: "Failed to bind camera",

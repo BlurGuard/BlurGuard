@@ -5,6 +5,7 @@ import com.nash.core.model.Detector
 import com.nash.core.model.FrameConsumer
 import com.nash.core.model.FrameMetadata
 import com.nash.core.model.PipelineStats
+import com.nash.core.model.RenderBoxFeed
 import com.nash.core.model.TrackedBox
 import com.nash.core.model.Tracker
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,6 +29,7 @@ import kotlinx.coroutines.flow.asStateFlow
 class DefaultAnonymizationPipeline<F>(
     private val detectors: List<Detector<F>>,
     private val tracker: Tracker,
+    private val renderBoxFeed: RenderBoxFeed,
     private val detectionInterval: Long = 2L
 ) : FrameConsumer<F> {
 
@@ -57,11 +59,15 @@ class DefaultAnonymizationPipeline<F>(
                     emptyList()
                 }
             }
-            _trackedBoxes.value = tracker.update(detections, metadata)
+            val boxes = tracker.update(detections,metadata)
+            _trackedBoxes.value = boxes
+            renderBoxFeed.publish(boxes,metadata.rotationDegrees)
             lastDetectionLatencyMillis = (System.nanoTime() - startNanos) / 1_000_000
             windowDetectionCount++
         } else {
-            _trackedBoxes.value = tracker.predict(metadata)
+            val boxes = tracker.predict(metadata)
+            _trackedBoxes.value = boxes
+            renderBoxFeed.publish(boxes,metadata.rotationDegrees)
         }
 
         // --- Perf counters: 1-second window over ALL processed frames.
@@ -85,6 +91,7 @@ class DefaultAnonymizationPipeline<F>(
         lastDetectionFrameId = -1L
         _trackedBoxes.value = emptyList()
         _stats.value = PipelineStats()
+        renderBoxFeed.clear()
         windowStartNanos = 0L
         windowFrameCount = 0
         windowDetectionCount = 0
