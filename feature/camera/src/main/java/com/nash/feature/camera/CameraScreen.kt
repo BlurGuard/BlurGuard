@@ -89,10 +89,10 @@ fun CameraScreen(
 
                 // Debug overlay: must sit directly on top of the preview and
                 // share its exact bounds so normalized coords line up.
-                TrackingOverlay(
-                    trackedBoxes = trackedBoxes,
-                    modifier = Modifier.fillMaxSize(),
-                )
+//                TrackingOverlay(
+//                    trackedBoxes = trackedBoxes,
+//                    modifier = Modifier.fillMaxSize(),
+//                )
 
                 RecordingOverlay(
                     uiState = uiState,

@@ -1,6 +1,9 @@
 package com.nash.blurguard.di
 
+import androidx.camera.core.CameraEffect
 import androidx.camera.core.ImageProxy
+import com.nash.core.blurring.AnonymizationCameraEffect
+import com.nash.core.blurring.AnonymizingSurfaceProcessor
 import com.nash.core.camera.CameraXCameraController
 import com.nash.core.common.DefaultDispatcherProvider
 import com.nash.core.common.DispatcherProvider
@@ -19,6 +22,7 @@ import com.nash.core.model.DetectorConfig
 import com.nash.core.model.DetectorDelegate
 import com.nash.core.model.FaceModelRange
 import com.nash.core.model.FrameSource
+import com.nash.core.model.RenderBoxFeed
 import com.nash.core.model.Tracker
 import com.nash.core.model.TrackerConfig
 import com.nash.core.model.VideoRecorder
@@ -92,7 +96,8 @@ abstract class AppModule {
             yoloDetector: YoloDetector,
             mediaPipeFaceDetector: MediaPipeFaceDetector,
             config: DetectorConfig,
-            tracker: Tracker
+            tracker: Tracker,
+            renderBoxFeed: RenderBoxFeed,
         ): AnonymizationEngine {
             val detectors: List<Detector<ImageProxy>> = when (config.backend) {
                 DetectorBackend.YOLO -> listOf(yoloDetector)
@@ -100,9 +105,25 @@ abstract class AppModule {
             }
             return DefaultAnonymizationEngine(
                 frameSource = frameSource,
-                pipeline = DefaultAnonymizationPipeline(detectors, tracker)
+                pipeline = DefaultAnonymizationPipeline(detectors, tracker, renderBoxFeed = renderBoxFeed)
             )
         }
+
+        @Provides
+        @Singleton
+        fun provideRenderBoxFeed(): RenderBoxFeed = RenderBoxFeed()
+
+        @Provides
+        @Singleton
+        fun provideAnonymizingSurfaceProcessor(
+            renderBoxFeed: RenderBoxFeed,
+        ): AnonymizingSurfaceProcessor = AnonymizingSurfaceProcessor(renderBoxFeed)
+
+        @Provides
+        @Singleton
+        fun provideAnonymizationEffect(
+            processor: AnonymizingSurfaceProcessor,
+        ): CameraEffect = AnonymizationCameraEffect(processor)
     }
 
     @Binds
