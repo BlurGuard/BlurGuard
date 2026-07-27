@@ -1,6 +1,7 @@
 package com.nash.core.domain
 
 import android.util.Log
+import com.nash.core.model.BoundingBox
 import com.nash.core.model.Detector
 import com.nash.core.model.FrameConsumer
 import com.nash.core.model.FrameMetadata
@@ -60,14 +61,16 @@ class DefaultAnonymizationPipeline<F>(
                 }
             }
             val boxes = tracker.update(detections,metadata)
-            _trackedBoxes.value = boxes
-            renderBoxFeed.publish(boxes,metadata.rotationDegrees)
+            val visibleBoxes = boxes.remappedToVisibleRegion(metadata)
+            _trackedBoxes.value = visibleBoxes
+            renderBoxFeed.publish(visibleBoxes, metadata.rotationDegrees)
             lastDetectionLatencyMillis = (System.nanoTime() - startNanos) / 1_000_000
             windowDetectionCount++
         } else {
             val boxes = tracker.predict(metadata)
-            _trackedBoxes.value = boxes
-            renderBoxFeed.publish(boxes,metadata.rotationDegrees)
+            val visibleBoxes = boxes.remappedToVisibleRegion(metadata)
+            _trackedBoxes.value = visibleBoxes
+            renderBoxFeed.publish(visibleBoxes, metadata.rotationDegrees)
         }
 
         // --- Perf counters: 1-second window over ALL processed frames.
@@ -83,6 +86,34 @@ class DefaultAnonymizationPipeline<F>(
             windowStartNanos = System.nanoTime()
             windowFrameCount = 0
             windowDetectionCount = 0
+        }
+    }
+
+    private fun List<TrackedBox>.remappedToVisibleRegion(meta: FrameMetadata): List<TrackedBox> {
+        val cw = if (meta.cropWidth > 0) meta.cropWidth else meta.width
+        val ch = if (meta.cropHeight > 0) meta.cropHeight else meta.height
+        if (cw == meta.width && ch == meta.height) return this // no crop, nothing to do
+
+        // Crop rect normalized to the buffer, then rotated into the same upright
+        // space the boxes live in.
+        val crop = BoundingBox(
+            left = meta.cropLeft / meta.width.toFloat(),
+            top = meta.cropTop / meta.height.toFloat(),
+            right = (meta.cropLeft + cw) / meta.width.toFloat(),
+            bottom = (meta.cropTop + ch) / meta.height.toFloat(),
+        ).rotatedToUpright(meta.rotationDegrees)
+
+        val w = crop.right - crop.left
+        val h = crop.bottom - crop.top
+        return map { tracked ->
+            tracked.copy(
+                box = BoundingBox(
+                    left = ((tracked.box.left - crop.left) / w).coerceIn(0f, 1f),
+                    top = ((tracked.box.top - crop.top) / h).coerceIn(0f, 1f),
+                    right = ((tracked.box.right - crop.left) / w).coerceIn(0f, 1f),
+                    bottom = ((tracked.box.bottom - crop.top) / h).coerceIn(0f, 1f),
+                )
+            )
         }
     }
 

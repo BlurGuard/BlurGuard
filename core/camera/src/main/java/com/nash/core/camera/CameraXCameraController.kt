@@ -8,7 +8,9 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import android.util.Rational
 import android.util.Size
+import android.view.Surface
 import android.view.View
 import androidx.camera.core.CameraEffect
 import androidx.core.content.ContextCompat
@@ -17,6 +19,7 @@ import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.core.UseCaseGroup
+import androidx.camera.core.ViewPort
 import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
@@ -208,12 +211,17 @@ class CameraXCameraController @Inject constructor(
                         imageProxy.close()
                         return@setAnalyzer
                     }
+                    val crop = imageProxy.cropRect
                     val metadata = FrameMetadata(
                         frameId = frameIdGenerator.incrementAndGet(),
                         timestampNanos = imageProxy.imageInfo.timestamp,
                         width = imageProxy.width,
                         height = imageProxy.height,
-                        rotationDegrees = imageProxy.imageInfo.rotationDegrees
+                        rotationDegrees = imageProxy.imageInfo.rotationDegrees,
+                        cropLeft = crop.left,
+                        cropTop = crop.top,
+                        cropWidth = crop.width(),
+                        cropHeight = crop.height(),
                     )
                     analysisScope.launch {
                         try {
@@ -225,7 +233,9 @@ class CameraXCameraController @Inject constructor(
                         }
                     }
                 }
+                val viewPort = ViewPort.Builder(Rational(9, 16), Surface.ROTATION_0).build()
                 val useCaseGroup = UseCaseGroup.Builder()
+                    .setViewPort(viewPort)
                     .addUseCase(preview)
                     .addUseCase(videoCaptureInstance)
                     .addUseCase(imageAnalysisInstance)

@@ -16,6 +16,7 @@ import com.nash.core.domain.DefaultAnonymizationPipeline
 import com.nash.core.ml.MediaPipeFaceDetector
 import com.nash.core.ml.YoloDetector
 import com.nash.core.model.AnonymizationEngine
+import com.nash.core.model.AnonymizationModeHolder
 import com.nash.core.model.Detector
 import com.nash.core.model.DetectorBackend
 import com.nash.core.model.DetectorConfig
@@ -115,10 +116,14 @@ abstract class AppModule {
 
         @Provides
         @Singleton
+        fun provideAnonymizationModeHolder(): AnonymizationModeHolder = AnonymizationModeHolder()
+
+        @Provides
+        @Singleton
         fun provideAnonymizingSurfaceProcessor(
             renderBoxFeed: RenderBoxFeed,
-        ): AnonymizingSurfaceProcessor = AnonymizingSurfaceProcessor(renderBoxFeed)
-
+            modeHolder: AnonymizationModeHolder,
+        ): AnonymizingSurfaceProcessor = AnonymizingSurfaceProcessor(renderBoxFeed, modeHolder)
         @Provides
         @Singleton
         fun provideAnonymizationEffect(

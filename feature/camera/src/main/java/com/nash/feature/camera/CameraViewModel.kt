@@ -6,14 +6,17 @@ import androidx.lifecycle.viewModelScope
 import com.nash.core.common.DispatcherProvider
 import com.nash.core.domain.usecase.BindCameraUseCase
 import com.nash.core.domain.usecase.GetCameraPreviewFactoryUseCase
+import com.nash.core.domain.usecase.ObserveAnonymizationModeUseCase
 import com.nash.core.domain.usecase.ObservePipelineStatsUseCase
 import com.nash.core.domain.usecase.ObserveRecordingStateUseCase
 import com.nash.core.domain.usecase.ObserveTrackedBoxesUseCase
+import com.nash.core.domain.usecase.SetAnonymizationModeUseCase
 import com.nash.core.domain.usecase.StartAnonymizationUseCase
 import com.nash.core.domain.usecase.StartRecordingUseCase
 import com.nash.core.domain.usecase.StopAnonymizationUseCase
 import com.nash.core.domain.usecase.StopRecordingUseCase
 import com.nash.core.domain.usecase.UnbindCameraUseCase
+import com.nash.core.model.AnonymizationModeEnum
 import com.nash.core.model.PipelineStats
 import com.nash.core.model.RecordingConfig
 import com.nash.core.model.RecordingStartResult
@@ -44,7 +47,11 @@ class CameraViewModel @Inject constructor(
     private val observeTrackedBoxesUseCase: ObserveTrackedBoxesUseCase,
     private val dispatcherProvider: DispatcherProvider,
     private val observePipelineStatsUseCase: ObservePipelineStatsUseCase,
-) : ViewModel() {
+    private val observeAnonymizationModeUseCase: ObserveAnonymizationModeUseCase,
+    private val setAnonymizationModeUseCase: SetAnonymizationModeUseCase,
+
+    ) : ViewModel() {
+    val anonymizationMode: StateFlow<AnonymizationModeEnum> = observeAnonymizationModeUseCase()
 
     private val _uiState = MutableStateFlow(CameraUiState())
     val uiState: StateFlow<CameraUiState> = _uiState.asStateFlow()
@@ -183,5 +190,13 @@ class CameraViewModel @Inject constructor(
         super.onCleared()
         stopDurationTimer()
         unbindCamera()
+    }
+
+
+
+    fun onModeClicked() {
+        val entries = AnonymizationModeEnum.entries
+        val next = entries[(entries.indexOf(anonymizationMode.value) + 1) % entries.size]
+        setAnonymizationModeUseCase(next)
     }
 }
