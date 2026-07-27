@@ -32,6 +32,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.nash.core.domain.CameraPreviewFactory
+import com.nash.core.model.AnonymizationModeEnum
 import com.nash.core.model.PipelineStats
 import com.nash.core.model.RecordingState
 import com.nash.core.model.TrackedBox
@@ -55,6 +56,8 @@ fun CameraScreen(
     onRequestPermissions: () -> Unit,
     onDismissError: () -> Unit,
     stats: PipelineStats,
+    mode: AnonymizationModeEnum,
+    onModeClick: () -> Unit,
 ) {
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
@@ -89,10 +92,10 @@ fun CameraScreen(
 
                 // Debug overlay: must sit directly on top of the preview and
                 // share its exact bounds so normalized coords line up.
-                TrackingOverlay(
-                    trackedBoxes = trackedBoxes,
-                    modifier = Modifier.fillMaxSize(),
-                )
+//                TrackingOverlay(
+//                    trackedBoxes = trackedBoxes,
+//                    modifier = Modifier.fillMaxSize(),
+//                )
 
                 RecordingOverlay(
                     uiState = uiState,
@@ -109,6 +112,18 @@ fun CameraScreen(
                         .statusBarsPadding()
                         .padding(8.dp)
                         .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+                Text(
+                    text = mode.displayText,
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .statusBarsPadding()
+                        .padding(8.dp)
+                        .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(4.dp))
+                        .clickable { onModeClick() }
                         .padding(horizontal = 8.dp, vertical = 4.dp)
                 )
                 Controls(

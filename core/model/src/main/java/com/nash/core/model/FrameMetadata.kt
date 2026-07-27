@@ -15,5 +15,10 @@ data class FrameMetadata(
     val timestampNanos: Long,
     val width: Int,
     val height: Int,
-    val rotationDegrees: Int
+    val rotationDegrees: Int,
+    /** Visible sub-rect of the buffer (ViewPort crop), in buffer pixels. 0 width/height = full frame. */
+    val cropLeft: Int = 0,
+    val cropTop: Int = 0,
+    val cropWidth: Int = 0,
+    val cropHeight: Int = 0,
 )
