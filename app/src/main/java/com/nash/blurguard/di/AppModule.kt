@@ -15,6 +15,7 @@ import com.nash.core.domain.DefaultAnonymizationEngine
 import com.nash.core.domain.DefaultAnonymizationPipeline
 import com.nash.core.ml.MediaPipeFaceDetector
 import com.nash.core.ml.YoloDetector
+import com.nash.core.ml.recognition.MobileFaceNetRecognizer
 import com.nash.core.model.AnonymizationEngine
 import com.nash.core.model.AnonymizationModeHolder
 import com.nash.core.model.Detector
@@ -22,6 +23,7 @@ import com.nash.core.model.DetectorBackend
 import com.nash.core.model.DetectorConfig
 import com.nash.core.model.DetectorDelegate
 import com.nash.core.model.FaceModelRange
+import com.nash.core.model.FaceRecognizer
 import com.nash.core.model.FrameSource
 import com.nash.core.model.KeepVisibleState
 import com.nash.core.model.OcSortConfig
@@ -171,6 +173,12 @@ abstract class AppModule {
                 maxGallerySize = config.maxGallerySize,
                 duplicateSimilarity = config.duplicateSimilarity
             )
+
+        @Provides
+        @Singleton
+        fun provideFaceRecognizer(
+            recognizer: MobileFaceNetRecognizer
+        ): FaceRecognizer<ImageProxy> = recognizer
     }
 
 //    @Binds
