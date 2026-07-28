@@ -23,11 +23,15 @@ import com.nash.core.model.DetectorConfig
 import com.nash.core.model.DetectorDelegate
 import com.nash.core.model.FaceModelRange
 import com.nash.core.model.FrameSource
+import com.nash.core.model.KeepVisibleState
 import com.nash.core.model.OcSortConfig
+import com.nash.core.model.RecognitionConfig
 import com.nash.core.model.RenderBoxFeed
+import com.nash.core.model.SessionTrustedPersonStore
 import com.nash.core.model.Tracker
 import com.nash.core.model.TrackerBackend
 import com.nash.core.model.TrackerConfig
+import com.nash.core.model.TrustedPersonStore
 import com.nash.core.model.VideoRecorder
 import com.nash.core.tracking.ByteTrackTracker
 import com.nash.core.tracking.ocsort.OcSortTracker
@@ -151,6 +155,22 @@ abstract class AppModule {
             TrackerBackend.BYTE_TRACK -> byteTrack.get()
             TrackerBackend.OC_SORT -> ocSort.get()
         }
+
+        @Provides
+        @Singleton
+        fun provideRecognitionConfig(): RecognitionConfig = RecognitionConfig()
+
+        @Provides
+        @Singleton
+        fun provideKeepVisibleState(): KeepVisibleState = KeepVisibleState()
+
+        @Provides
+        @Singleton
+        fun provideTrustedPersonStore(config: RecognitionConfig): TrustedPersonStore =
+            SessionTrustedPersonStore(
+                maxGallerySize = config.maxGallerySize,
+                duplicateSimilarity = config.duplicateSimilarity
+            )
     }
 
 //    @Binds
