@@ -170,6 +170,11 @@ class AnonymizingSurfaceProcessor(
         val mode = modeHolder.mode.value
         val boxes = snapshot.boxes.filter { !it.keepVisible }
 
+        val kept = snapshot.boxes.count { it.keepVisible }
+        if (kept != lastKept) {
+            lastKept = kept
+            Log.d("Renderer", "keepVisible boxes in feed: $kept")
+        }
         // Prepare the blurred copy of the frame once, shared by all outputs.
         if (mode == AnonymizationModeEnum.BLUR && boxes.isNotEmpty()) {
             renderBlurTexture()
@@ -515,6 +520,8 @@ class AnonymizingSurfaceProcessor(
         const val BOX_DILATION = 0.25f
 
         val IDENTITY = FloatArray(16).also { Matrix.setIdentityM(it, 0) }
+        private var lastKept = -1
+
 
         fun floatBuffer(data: FloatArray): FloatBuffer =
             ByteBuffer.allocateDirect(data.size * 4)

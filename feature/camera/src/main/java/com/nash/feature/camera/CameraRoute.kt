@@ -71,6 +71,7 @@ fun CameraRoute(
     val pipelineStats by viewModel.pipelineStats.collectAsStateWithLifecycle()
     val mode by viewModel.anonymizationMode.collectAsStateWithLifecycle()
     val idStats by viewModel.idStats.collectAsStateWithLifecycle()
+    val keepVisible by viewModel.keepVisible.collectAsStateWithLifecycle()
     CameraScreen(
         uiState = uiState,
         previewFactory = viewModel.previewFactory,
@@ -82,6 +83,9 @@ fun CameraRoute(
         stats = pipelineStats,
         mode = mode,
         onModeClick = { viewModel.onModeClicked() },
-        idStats = idStats
+        idStats = idStats,
+        keepVisible = keepVisible,
+        onFaceTapped = { viewModel.onFaceTapped(it) },
+        onRevokeAllKeepVisible = { viewModel.onRevokeAllKeepVisible() }
     )
 }

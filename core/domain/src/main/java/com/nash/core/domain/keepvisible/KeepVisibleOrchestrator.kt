@@ -1,5 +1,6 @@
 package com.nash.core.domain.keepvisible
 
+import android.util.Log
 import com.nash.core.model.DetectionClass
 import com.nash.core.model.FaceRecognizer
 import com.nash.core.model.FrameMetadata
@@ -11,26 +12,14 @@ import com.nash.core.model.TrackedBox
 import com.nash.core.model.TrustedPersonStore
 import com.nash.core.model.VerificationState
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Decides blur vs keep-visible. Owns the whole trust lifecycle:
+ * Person-level keep-visible trust. Runs on the ml thread inside the pipeline's
+ * detection branch; UI threads only touch the atomics via [KeepVisibleController].
  *
- * - Tap -> enroll embedding as a trusted person -> TRUSTED (immediate: the tap
- *   IS the user's explicit intent; K-consecutive applies to re-entry only).
- * - New FACE track while trusted persons exist -> verify: match K consecutive
- *   times -> TRUSTED (same person, new track id); mismatch -> REJECTED.
- * - TRUSTED tracks are re-verified periodically (defense against tracker ID
- *   switches); consecutive mismatches revoke.
- * - REJECTED tracks are re-checked on a slow cadence (appearance may improve).
- *
- * Budget: at most ONE recognizer call per detection frame, chosen by the
- * priority above. Fail-closed everywhere: a null embedding is "no decision",
- * never a match or a mismatch.
- *
- * Threading: [onDetectionFrame] and all state/store mutation run on the ml
- * dispatcher (inside the pipeline). UI-thread calls only touch atomics.
+ * Budget: at most ONE recognizer call per detection frame, priority-ordered:
+ * pending tap > verify unknown/pending > re-verify trusted > recheck rejected.
  */
 class KeepVisibleOrchestrator<F>(
     private val recognizer: FaceRecognizer<F>,
@@ -39,197 +28,245 @@ class KeepVisibleOrchestrator<F>(
     private val config: RecognitionConfig
 ) : KeepVisibleController {
 
+    /** Written from UI, drained on ml thread. */
     private val pendingEnrollment = AtomicLong(NO_REQUEST)
     private val revokeAllRequested = AtomicBoolean(false)
 
-    // ml-thread only:
-    private var enrollAttemptsFor: TrackId? = null
-    private var enrollAttempts = 0
+    /** ml-thread only. */
+    private val enrollAttempts = HashMap<Long, Int>()
 
     override fun requestKeepVisible(trackId: TrackId) {
+        Log.d(TAG, "tap: keep-visible requested for track=${trackId.value}")
         pendingEnrollment.set(trackId.value)
     }
 
     override fun revokeAll() {
-        // Instant visual effect (plain assignment, thread-safe)...
-        state.clearAll()
-        // ...and authoritative cleanup on the ml thread, closing the tiny
-        // window where an in-flight verification could re-add an entry.
-        revokeAllRequested.set(true)
+        Log.d(TAG, "revokeAll requested")
+        state.clearAll() // instant visual re-blur
+        revokeAllRequested.set(true) // store wipe drained on ml thread
     }
 
-    /** Called by the pipeline when a recording session starts/resets. */
     fun onSessionReset() {
         pendingEnrollment.set(NO_REQUEST)
+        enrollAttempts.clear()
         state.clearAll()
-        // Trusted persons deliberately survive session resets (trust is
-        // per-person, not per-session); revokeAll() is the explicit wipe.
+        Log.d(TAG, "session reset (trusted persons kept: ${store.trustedPersonCount})")
     }
 
-    /**
-     * Called from the pipeline's detection branch, after tracker.update and
-     * before publishing. [boxes] are upright-normalized tracker output — the
-     * same space the recognizer's crop expects.
-     */
     suspend fun onDetectionFrame(frame: F, metadata: FrameMetadata, boxes: List<TrackedBox>) {
-        if (revokeAllRequested.getAndSet(false)) {
+        if (revokeAllRequested.compareAndSet(true, false)) {
             store.revokeAll()
             state.clearAll()
+            enrollAttempts.clear()
+            Log.d(TAG, "revokeAll drained: trusted store wiped")
         }
-        state.retainTracks(boxes.mapTo(mutableSetOf()) { it.id })
 
-        val frameId = metadata.frameId
         val faces = boxes.filter { it.clazz == DetectionClass.FACE }
+        state.retainTracks(faces.map { it.id }.toSet())
+        enrollAttempts.keys.retainAll(faces.map { it.id.value }.toSet())
 
         // Priority 1: pending tap.
-        val pendingId = pendingEnrollment.get()
-        if (pendingId != NO_REQUEST) {
-            val target = faces.firstOrNull { it.id.value == pendingId }
+        val pendingValue = pendingEnrollment.get()
+        if (pendingValue != NO_REQUEST) {
+            val target = faces.firstOrNull { it.id.value == pendingValue }
             if (target != null) {
                 enroll(frame, target, metadata)
                 return
             }
-            // Track died before we could enroll — drop the request.
-            pendingEnrollment.compareAndSet(pendingId, NO_REQUEST)
+            Log.d(TAG, "tap: track=$pendingValue no longer alive, dropping request")
+            pendingEnrollment.compareAndSet(pendingValue, NO_REQUEST)
         }
 
-        if (store.trustedPersonCount == 0) return
+        // Priority 2: verify unknown/pending faces (re-identification on re-entry).
+        if (store.trustedPersonCount > 0) {
+            pickDue(faces, metadata.frameId, VERIFY_RETRY_INTERVAL_FRAMES) {
+                it.state == VerificationState.UNKNOWN || it.state == VerificationState.PENDING
+            }?.let {
+                verify(frame, it, metadata)
+                return
+            }
+        }
 
-        // Priority 2: unverified new tracks (UNKNOWN/PENDING).
-        pickDue(faces, frameId, VERIFY_RETRY_INTERVAL_FRAMES) {
-            it.state == VerificationState.UNKNOWN || it.state == VerificationState.PENDING
-        }?.let { verify(frame, it, metadata); return }
-
-        // Priority 3: periodic re-verification of TRUSTED tracks.
-        pickDue(faces, frameId, config.reVerifyIntervalFrames) {
+        // Priority 3: periodic re-verify of trusted tracks (ID-switch defense
+        // AND pipeline self-check: same person should log high similarity here).
+        pickDue(faces, metadata.frameId, config.reVerifyIntervalFrames) {
             it.state == VerificationState.TRUSTED
-        }?.let { reVerify(frame, it, metadata); return }
+        }?.let {
+            reVerify(frame, it, metadata)
+            return
+        }
 
-        // Priority 4: slow re-check of REJECTED tracks (pose may have improved).
-        pickDue(faces, frameId, config.reVerifyIntervalFrames * REJECTED_RECHECK_MULTIPLIER) {
+        // Priority 4: slow recheck of rejected tracks.
+        pickDue(faces, metadata.frameId, config.reVerifyIntervalFrames * REJECTED_RECHECK_MULTIPLIER) {
             it.state == VerificationState.REJECTED
-        }?.let { verify(frame, it, metadata) }
+        }?.let {
+            verify(frame, it, metadata)
+        }
     }
 
-    /** Oldest-checked-first among tracks whose check interval has elapsed. */
-    private inline fun pickDue(
+    /** Oldest-checked face matching [predicate] whose [interval] has elapsed. */
+    private fun pickDue(
         faces: List<TrackedBox>,
         frameId: Long,
-        intervalFrames: Long,
-        crossinline predicate: (TrackVerification) -> Boolean
+        interval: Long,
+        predicate: (TrackVerification) -> Boolean
     ): TrackedBox? = faces
-        .filter {
-            val v = state.of(it.id)
-            predicate(v) && frameId - v.lastCheckedFrame >= intervalFrames
-        }
+        .filter { predicate(state.of(it.id)) }
+        .filter { frameId - state.of(it.id).lastCheckedFrame >= interval }
         .minByOrNull { state.of(it.id).lastCheckedFrame }
 
     private suspend fun enroll(frame: F, track: TrackedBox, metadata: FrameMetadata) {
-        if (enrollAttemptsFor != track.id) {
-            enrollAttemptsFor = track.id
-            enrollAttempts = 0
-        }
-        val current = state.of(track.id)
         val embedding = recognizer.embed(frame, track.box, metadata)
         if (embedding == null) {
-            enrollAttempts++
-            if (enrollAttempts >= MAX_ENROLL_ATTEMPTS) {
-                // Quality gates never passed (tiny/profile face). Give up;
-                // Phase 5 surfaces this as "couldn't verify — try closer".
+            val attempts = (enrollAttempts[track.id.value] ?: 0) + 1
+            enrollAttempts[track.id.value] = attempts
+            Log.d(TAG, "enroll track=${track.id.value}: null embed, attempt $attempts/$MAX_ENROLL_ATTEMPTS")
+            if (attempts >= MAX_ENROLL_ATTEMPTS) {
+                enrollAttempts.remove(track.id.value)
                 pendingEnrollment.compareAndSet(track.id.value, NO_REQUEST)
-                state.set(track.id, TrackVerification(lastCheckedFrame = metadata.frameId))
+                state.set(track.id, TrackVerification(
+                    state = VerificationState.UNKNOWN,
+                    lastCheckedFrame = metadata.frameId
+                ))
+                Log.w(TAG, "enroll track=${track.id.value}: GAVE UP — quality gates never passed")
             } else {
-                state.set(
-                    track.id,
-                    current.copy(state = VerificationState.PENDING, lastCheckedFrame = metadata.frameId)
-                )
+                state.set(track.id, TrackVerification(
+                    state = VerificationState.PENDING,
+                    lastCheckedFrame = metadata.frameId
+                ))
             }
             return
         }
 
-        pendingEnrollment.compareAndSet(track.id.value, NO_REQUEST)
+        enrollAttempts.remove(track.id.value)
         val match = store.bestMatch(embedding)
         val personId = if (match != null && match.similarity >= config.matchThreshold) {
-            // Tapped an already-trusted person (e.g. after re-entry): reuse the
-            // identity and grow its gallery instead of forking a duplicate.
+            Log.i(TAG, "enroll track=${track.id.value}: matched existing person=${match.personId.value} " +
+                    "sim=${fmt(match.similarity)} -> reusing")
             store.addToGallery(match.personId, embedding)
             match.personId
         } else {
-            store.enroll(embedding)
+            val newId = store.enroll(embedding)
+            Log.i(TAG, "enroll track=${track.id.value}: NEW person=${newId.value} " +
+                    "(bestExisting=${match?.similarity?.let(::fmt) ?: "none"})")
+            newId
         }
-        state.set(
-            track.id,
-            TrackVerification(VerificationState.TRUSTED, personId, lastCheckedFrame = metadata.frameId)
-        )
+        state.set(track.id, TrackVerification(
+            state = VerificationState.TRUSTED,
+            personId = personId,
+            lastCheckedFrame = metadata.frameId
+        ))
+        pendingEnrollment.compareAndSet(track.id.value, NO_REQUEST)
     }
 
     private suspend fun verify(frame: F, track: TrackedBox, metadata: FrameMetadata) {
         val current = state.of(track.id)
         val embedding = recognizer.embed(frame, track.box, metadata)
-            ?: run {
-                // No decision — just reschedule (fail-closed).
-                state.set(track.id, current.copy(lastCheckedFrame = metadata.frameId))
-                return
-            }
+        if (embedding == null) {
+            Log.d(TAG, "verify track=${track.id.value}: null embed (quality gate) — no decision")
+            state.set(track.id, current.copy(lastCheckedFrame = metadata.frameId))
+            return
+        }
 
         val match = store.bestMatch(embedding)
+        Log.d(TAG, "verify track=${track.id.value}: best=${match?.similarity?.let(::fmt) ?: "none"} " +
+                "person=${match?.personId?.value} threshold=${fmt(config.matchThreshold)}")
+
         if (match != null && match.similarity >= config.matchThreshold) {
             val matches = current.consecutiveMatches + 1
             if (matches >= config.consecutiveMatchesToTrust) {
-                store.addToGallery(match.personId, embedding) // opportunistic variety
-                state.set(
-                    track.id,
-                    TrackVerification(VerificationState.TRUSTED, match.personId, lastCheckedFrame = metadata.frameId)
-                )
+                store.addToGallery(match.personId, embedding)
+                state.set(track.id, TrackVerification(
+                    state = VerificationState.TRUSTED,
+                    personId = match.personId,
+                    consecutiveMatches = matches,
+                    lastCheckedFrame = metadata.frameId
+                ))
+                Log.i(TAG, "verify track=${track.id.value}: TRUSTED as person=${match.personId.value} " +
+                        "sim=${fmt(match.similarity)}")
             } else {
-                state.set(
-                    track.id,
-                    TrackVerification(
-                        VerificationState.PENDING,
-                        match.personId,
-                        consecutiveMatches = matches,
-                        lastCheckedFrame = metadata.frameId
-                    )
-                )
+                state.set(track.id, current.copy(
+                    state = VerificationState.PENDING,
+                    personId = match.personId,
+                    consecutiveMatches = matches,
+                    consecutiveMismatches = 0,
+                    lastCheckedFrame = metadata.frameId
+                ))
             }
         } else {
-            state.set(track.id, TrackVerification(VerificationState.REJECTED, lastCheckedFrame = metadata.frameId))
+            // F2 fix: hysteresis — never hard-reject on a single noisy embed.
+            val mismatches = current.consecutiveMismatches + 1
+            val newState = if (mismatches >= config.mismatchesToRevoke) {
+                VerificationState.REJECTED
+            } else {
+                current.state // stay UNKNOWN/PENDING, keep trying
+            }
+            state.set(track.id, current.copy(
+                state = newState,
+                consecutiveMatches = 0,
+                consecutiveMismatches = mismatches,
+                lastCheckedFrame = metadata.frameId
+            ))
+            if (newState == VerificationState.REJECTED) {
+                Log.w(TAG, "verify track=${track.id.value}: REJECTED after $mismatches mismatches")
+            }
         }
     }
 
     private suspend fun reVerify(frame: F, track: TrackedBox, metadata: FrameMetadata) {
         val current = state.of(track.id)
         val embedding = recognizer.embed(frame, track.box, metadata)
-            ?: run {
-                state.set(track.id, current.copy(lastCheckedFrame = metadata.frameId))
-                return
-            }
+        if (embedding == null) {
+            Log.d(TAG, "reVerify track=${track.id.value}: null embed — no decision")
+            state.set(track.id, current.copy(lastCheckedFrame = metadata.frameId))
+            return
+        }
 
         val match = store.bestMatch(embedding)
         val samePerson = match != null &&
                 match.personId == current.personId &&
                 match.similarity >= config.matchThreshold
+
         if (samePerson) {
-            store.addToGallery(match!!.personId, embedding)
-            state.set(track.id, current.copy(consecutiveMismatches = 0, lastCheckedFrame = metadata.frameId))
+            // SELF-CHECK: person hasn't moved -> this similarity is your
+            // pipeline health metric. Should be comfortably above threshold.
+            Log.i(TAG, "reVerify track=${track.id.value}: OK person=${match!!.personId.value} " +
+                    "sim=${fmt(match.similarity)}")
+            store.addToGallery(match.personId, embedding)
+            state.set(track.id, current.copy(
+                consecutiveMismatches = 0,
+                lastCheckedFrame = metadata.frameId
+            ))
         } else {
-            val misses = current.consecutiveMismatches + 1
-            if (misses >= config.mismatchesToRevoke) {
-                // Track was likely stolen by an ID switch: re-blur it.
-                state.set(track.id, TrackVerification(VerificationState.REJECTED, lastCheckedFrame = metadata.frameId))
+            val mismatches = current.consecutiveMismatches + 1
+            Log.w(TAG, "reVerify track=${track.id.value}: MISMATCH " +
+                    "best=${match?.similarity?.let(::fmt) ?: "none"} bestPerson=${match?.personId?.value} " +
+                    "expected=${current.personId?.value} ($mismatches/${config.mismatchesToRevoke})")
+            if (mismatches >= config.mismatchesToRevoke) {
+                state.set(track.id, TrackVerification(
+                    state = VerificationState.REJECTED,
+                    personId = current.personId,
+                    lastCheckedFrame = metadata.frameId
+                ))
+                Log.w(TAG, "reVerify track=${track.id.value}: REVOKED (possible ID switch)")
             } else {
-                state.set(track.id, current.copy(consecutiveMismatches = misses, lastCheckedFrame = metadata.frameId))
+                state.set(track.id, current.copy(
+                    consecutiveMismatches = mismatches,
+                    lastCheckedFrame = metadata.frameId
+                ))
             }
         }
     }
 
+    private fun fmt(v: Float) = "%.3f".format(v)
+
     private companion object {
+        const val TAG = "KeepVisible"
+        /** Sentinel for "no pending enrollment" — real TrackIds start at 1. */
         const val NO_REQUEST = Long.MIN_VALUE
-        /** Retry cadence for verification attempts (in frame IDs, ~6 = 2 detection cycles). */
         const val VERIFY_RETRY_INTERVAL_FRAMES = 6L
-        /** Give up enrolling after this many failed quality-gated attempts. */
         const val MAX_ENROLL_ATTEMPTS = 10
-        /** REJECTED tracks are re-checked this much slower than re-verification. */
-        const val REJECTED_RECHECK_MULTIPLIER = 4
+        /** Was 4 — shortened: hysteresis (F2) makes rejection safe to retry sooner. */
+        const val REJECTED_RECHECK_MULTIPLIER = 2
     }
 }

@@ -42,14 +42,31 @@ class MobileFaceNetRecognizer @Inject constructor(
         val buffer = ByteBuffer.allocateDirect(model.size).order(ByteOrder.nativeOrder())
         buffer.put(model)
         buffer.rewind()
-        Interpreter(buffer, Interpreter.Options().setNumThreads(NUM_THREADS)).also {
-            // NOTE: this assumes float32 input/output (dynamic-range int8 weights).
-            // If you export full-int8 I/O, read input/output scale + zero point
-            // from the tensors here and quantize/dequantize accordingly.
-            embeddingSize = it.getOutputTensor(0).shape().last()
-        }
+        val tempInterperter: Interpreter =Interpreter(buffer, Interpreter.Options().setNumThreads(NUM_THREADS))
+
+        Log.i(TAG, "model spec: input=${tempInterperter.getInputTensor(0).shape().contentToString()} " +
+                "${tempInterperter.getInputTensor(0).dataType()} " +
+                "output=${tempInterperter.getOutputTensor(0).shape().contentToString()} " +
+                "${tempInterperter.getOutputTensor(0).dataType()}")
+
+        tempInterperter
     }
-    private var embeddingSize = 0
+
+
+    private val embeddingSize: Int by lazy {
+        // Pin the input to a concrete shape and allocate before reading the
+        // output shape — some converted models report 0/dynamic dims until then.
+        interpreter.resizeInput(0, intArrayOf(1, INPUT_SIZE, INPUT_SIZE, 3))
+        interpreter.allocateTensors()
+        val inShape = interpreter.getInputTensor(0).shape()
+        val outShape = interpreter.getOutputTensor(0).shape()
+        Log.i(TAG, "model spec (allocated): input=${inShape.contentToString()} " +
+                "${interpreter.getInputTensor(0).dataType()} " +
+                "output=${outShape.contentToString()} ${interpreter.getOutputTensor(0).dataType()}")
+        val size = outShape.last()
+        require(size > 0) { "Unusable output shape ${outShape.contentToString()}" }
+        size
+    }
 
     private val inputBuffer: ByteBuffer by lazy {
         ByteBuffer.allocateDirect(INPUT_SIZE * INPUT_SIZE * 3 * 4).order(ByteOrder.nativeOrder())
@@ -67,6 +84,9 @@ class MobileFaceNetRecognizer @Inject constructor(
         faceBox: BoundingBox,
         metadata: FrameMetadata
     ): FaceEmbedding? = withContext(dispatcherProvider.ml) {
+//        Log.d(TAG, "input=${interpreter.getInputTensor(0).shape().contentToString()} " +
+//                "${interpreter.getInputTensor(0).dataType()} " +
+//                "output=${interpreter.getOutputTensor(0).shape().contentToString()}")
         val t0 = SystemClock.elapsedRealtimeNanos()
 
         // 1) Upright bitmap. faceBox is in upright normalized space, so rotate
@@ -100,7 +120,12 @@ class MobileFaceNetRecognizer @Inject constructor(
         inputBuffer.rewind()
 
         val output = Array(1) { FloatArray(embeddingSize) }
-        interpreter.run(inputBuffer, output)
+        try {
+            interpreter.run(inputBuffer, output)
+        } catch (e: Exception) {
+            Log.e(TAG, "inference failed", e)
+            return@withContext null
+        }
         val t2 = SystemClock.elapsedRealtimeNanos()
 
         logTimings((t1 - t0) / 1e6, (t2 - t1) / 1e6)
@@ -130,8 +155,8 @@ class MobileFaceNetRecognizer @Inject constructor(
         val now = SystemClock.uptimeMillis()
         if (now - lastLogUptimeMs >= 1000) {
             lastLogUptimeMs = now
-            Log.d(TAG, "align=%.1fms infer=%.1fms calls=%d"
-                .format(emaAlignMs, emaInferMs, timedCalls))
+//            Log.d(TAG, "align=%.1fms infer=%.1fms calls=%d"
+//                .format(emaAlignMs, emaInferMs, timedCalls))
         }
     }
 

@@ -65,13 +65,13 @@ class DefaultAnonymizationPipeline<F>(
             }
             val boxes = tracker.update(detections,metadata)
             keepVisible.onDetectionFrame(frame, metadata, boxes)
-            val visibleBoxes = boxes.remappedToVisibleRegion(metadata)
+            val visibleBoxes = keepVisibleState.decorate(boxes).remappedToVisibleRegion(metadata)
             _trackedBoxes.value = visibleBoxes
             renderBoxFeed.publish(visibleBoxes, metadata.rotationDegrees)
             lastDetectionLatencyMillis = (System.nanoTime() - startNanos) / 1_000_000
             windowDetectionCount++
         } else {
-            val boxes = tracker.predict(metadata)
+            val boxes = keepVisibleState.decorate(tracker.predict(metadata))
             val visibleBoxes = boxes.remappedToVisibleRegion(metadata)
             _trackedBoxes.value = visibleBoxes
             renderBoxFeed.publish(visibleBoxes, metadata.rotationDegrees)

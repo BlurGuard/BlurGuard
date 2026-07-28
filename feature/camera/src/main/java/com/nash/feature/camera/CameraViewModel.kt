@@ -7,9 +7,12 @@ import com.nash.core.common.DispatcherProvider
 import com.nash.core.domain.usecase.BindCameraUseCase
 import com.nash.core.domain.usecase.GetCameraPreviewFactoryUseCase
 import com.nash.core.domain.usecase.ObserveAnonymizationModeUseCase
+import com.nash.core.domain.usecase.ObserveKeepVisibleStateUseCase
 import com.nash.core.domain.usecase.ObservePipelineStatsUseCase
 import com.nash.core.domain.usecase.ObserveRecordingStateUseCase
 import com.nash.core.domain.usecase.ObserveTrackedBoxesUseCase
+import com.nash.core.domain.usecase.RequestKeepVisibleUseCase
+import com.nash.core.domain.usecase.RevokeAllKeepVisibleUseCase
 import com.nash.core.domain.usecase.SetAnonymizationModeUseCase
 import com.nash.core.domain.usecase.StartAnonymizationUseCase
 import com.nash.core.domain.usecase.StartRecordingUseCase
@@ -22,7 +25,10 @@ import com.nash.core.model.RecordingConfig
 import com.nash.core.model.RecordingStartResult
 import com.nash.core.model.RecordingState
 import com.nash.core.model.RecordingStopResult
+import com.nash.core.model.TrackId
+import com.nash.core.model.TrackVerification
 import com.nash.core.model.TrackedBox
+import com.nash.core.model.VerificationState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Job
@@ -49,7 +55,10 @@ class CameraViewModel @Inject constructor(
     private val observePipelineStatsUseCase: ObservePipelineStatsUseCase,
     private val observeAnonymizationModeUseCase: ObserveAnonymizationModeUseCase,
     private val setAnonymizationModeUseCase: SetAnonymizationModeUseCase,
-    private val observeTrackedBoxes: ObserveTrackedBoxesUseCase
+    private val observeTrackedBoxes: ObserveTrackedBoxesUseCase,
+    private val observeKeepVisibleStateUseCase: ObserveKeepVisibleStateUseCase,
+    private val requestKeepVisibleUseCase: RequestKeepVisibleUseCase,
+    private val revokeAllKeepVisibleUseCase: RevokeAllKeepVisibleUseCase
 
     ) : ViewModel() {
     val anonymizationMode: StateFlow<AnonymizationModeEnum> = observeAnonymizationModeUseCase()
@@ -68,6 +77,51 @@ class CameraViewModel @Inject constructor(
      */
     val trackedBoxes: StateFlow<List<TrackedBox>> = observeTrackedBoxesUseCase()
 
+    /** Per-track verification for overlay colors and the revoke chip. */
+    val keepVisible: StateFlow<Map<TrackId, TrackVerification>> =
+        observeKeepVisibleStateUseCase()
+
+    private var enrollTarget: TrackId? = null
+    private var enrollSeenPending = false
+
+    init {
+        viewModelScope.launch {
+            keepVisible.collect { map ->
+                val target = enrollTarget ?: return@collect
+                when (map[target]?.state) {
+                    VerificationState.TRUSTED -> {
+                        enrollTarget = null
+                        enrollSeenPending = false
+                    }
+                    VerificationState.PENDING -> enrollSeenPending = true
+                    else -> if (enrollSeenPending) {
+                        // PENDING -> gone/UNKNOWN = orchestrator gave up
+                        // (quality gates never passed) or the track died.
+                        enrollTarget = null
+                        enrollSeenPending = false
+                        _uiState.update {
+                            it.copy(keepVisibleMessage = "Couldn't verify the face — move closer and try again")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fun onFaceTapped(trackId: TrackId) {
+        enrollTarget = trackId
+        enrollSeenPending = false
+        requestKeepVisibleUseCase(trackId)
+    }
+
+    fun onRevokeAllKeepVisible() {
+        enrollTarget = null
+        revokeAllKeepVisibleUseCase()
+    }
+
+    fun onKeepVisibleMessageShown() {
+        _uiState.update { it.copy(keepVisibleMessage = null) }
+    }
     val previewFactory = getCameraPreviewFactoryUseCase()
 
     private var durationJob: Job? = null
