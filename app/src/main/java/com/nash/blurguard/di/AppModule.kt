@@ -13,6 +13,8 @@ import com.nash.core.domain.CameraPreviewFactory
 import com.nash.core.domain.CameraSession
 import com.nash.core.domain.DefaultAnonymizationEngine
 import com.nash.core.domain.DefaultAnonymizationPipeline
+import com.nash.core.domain.keepvisible.KeepVisibleController
+import com.nash.core.domain.keepvisible.KeepVisibleOrchestrator
 import com.nash.core.ml.MediaPipeFaceDetector
 import com.nash.core.ml.YoloDetector
 import com.nash.core.ml.recognition.MobileFaceNetRecognizer
@@ -102,6 +104,22 @@ abstract class AppModule {
 
         @Provides
         @Singleton
+        fun provideKeepVisibleOrchestrator(
+            recognizer: @JvmSuppressWildcards FaceRecognizer<ImageProxy>,
+            store: TrustedPersonStore,
+            state: KeepVisibleState,
+            config: RecognitionConfig
+        ): KeepVisibleOrchestrator<ImageProxy> =
+            KeepVisibleOrchestrator(recognizer, store, state, config)
+
+        @Provides
+        @Singleton
+        fun provideKeepVisibleController(
+            orchestrator: KeepVisibleOrchestrator<ImageProxy>
+        ): KeepVisibleController = orchestrator
+
+        @Provides
+        @Singleton
         fun provideAnonymizationEngine(
             frameSource: @JvmSuppressWildcards FrameSource<ImageProxy>,
             yoloDetector: YoloDetector,
@@ -109,6 +127,8 @@ abstract class AppModule {
             config: DetectorConfig,
             tracker: Tracker,
             renderBoxFeed: RenderBoxFeed,
+            keepVisibleOrchestrator: KeepVisibleOrchestrator<ImageProxy>,
+            keepVisibleState: KeepVisibleState,
         ): AnonymizationEngine {
             val detectors: List<Detector<ImageProxy>> = when (config.backend) {
                 DetectorBackend.YOLO -> listOf(yoloDetector)
@@ -116,7 +136,7 @@ abstract class AppModule {
             }
             return DefaultAnonymizationEngine(
                 frameSource = frameSource,
-                pipeline = DefaultAnonymizationPipeline(detectors, tracker, renderBoxFeed = renderBoxFeed)
+                pipeline = DefaultAnonymizationPipeline(detectors, tracker, renderBoxFeed = renderBoxFeed, keepVisibleState = keepVisibleState, keepVisible = keepVisibleOrchestrator),
             )
         }
 

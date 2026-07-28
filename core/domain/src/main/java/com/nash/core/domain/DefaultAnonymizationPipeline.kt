@@ -1,10 +1,11 @@
 package com.nash.core.domain
 
-import android.util.Log
+import com.nash.core.domain.keepvisible.KeepVisibleOrchestrator
 import com.nash.core.model.BoundingBox
 import com.nash.core.model.Detector
 import com.nash.core.model.FrameConsumer
 import com.nash.core.model.FrameMetadata
+import com.nash.core.model.KeepVisibleState
 import com.nash.core.model.PipelineStats
 import com.nash.core.model.RenderBoxFeed
 import com.nash.core.model.TrackedBox
@@ -30,6 +31,8 @@ import kotlinx.coroutines.flow.asStateFlow
 class DefaultAnonymizationPipeline<F>(
     private val detectors: List<Detector<F>>,
     private val tracker: Tracker,
+    private val keepVisibleState: KeepVisibleState,
+    private val keepVisible: KeepVisibleOrchestrator<F>,
     private val renderBoxFeed: RenderBoxFeed,
     private val detectionInterval: Long = 2L
 ) : FrameConsumer<F> {
@@ -61,6 +64,7 @@ class DefaultAnonymizationPipeline<F>(
                 }
             }
             val boxes = tracker.update(detections,metadata)
+            keepVisible.onDetectionFrame(frame, metadata, boxes)
             val visibleBoxes = boxes.remappedToVisibleRegion(metadata)
             _trackedBoxes.value = visibleBoxes
             renderBoxFeed.publish(visibleBoxes, metadata.rotationDegrees)
@@ -119,6 +123,7 @@ class DefaultAnonymizationPipeline<F>(
 
     fun reset() {
         tracker.reset()
+        keepVisible.onSessionReset()
         lastDetectionFrameId = -1L
         _trackedBoxes.value = emptyList()
         _stats.value = PipelineStats()
