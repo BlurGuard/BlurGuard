@@ -49,10 +49,15 @@ class CameraViewModel @Inject constructor(
     private val observePipelineStatsUseCase: ObservePipelineStatsUseCase,
     private val observeAnonymizationModeUseCase: ObserveAnonymizationModeUseCase,
     private val setAnonymizationModeUseCase: SetAnonymizationModeUseCase,
+    private val observeTrackedBoxes: ObserveTrackedBoxesUseCase
 
     ) : ViewModel() {
     val anonymizationMode: StateFlow<AnonymizationModeEnum> = observeAnonymizationModeUseCase()
+    private val seenIds = mutableSetOf<Long>()
+    private val _idStats = MutableStateFlow(IdStats())
+    val idStats: StateFlow<IdStats> = _idStats.asStateFlow()
 
+    data class IdStats(val active: Int = 0, val totalSeen: Int = 0)
     private val _uiState = MutableStateFlow(CameraUiState())
     val uiState: StateFlow<CameraUiState> = _uiState.asStateFlow()
     val pipelineStats: StateFlow<PipelineStats> = observePipelineStatsUseCase()
@@ -88,7 +93,19 @@ class CameraViewModel @Inject constructor(
             }
         }
     }
+    init {
+        viewModelScope.launch {
+            observeTrackedBoxes().collect { boxes ->
+                boxes.forEach { seenIds += it.id.value }
+                _idStats.value = IdStats(active = boxes.size, totalSeen = seenIds.size)
+            }
+        }
+    }
 
+    fun resetIdStats() {
+        seenIds.clear()
+        _idStats.value = IdStats()
+    }
     fun bindCamera(lifecycleOwner: LifecycleOwner) {
         bindCameraUseCase(lifecycleOwner)
         // Frames only flow while the camera is bound, so the pipeline's

@@ -23,16 +23,20 @@ import com.nash.core.model.DetectorConfig
 import com.nash.core.model.DetectorDelegate
 import com.nash.core.model.FaceModelRange
 import com.nash.core.model.FrameSource
+import com.nash.core.model.OcSortConfig
 import com.nash.core.model.RenderBoxFeed
 import com.nash.core.model.Tracker
+import com.nash.core.model.TrackerBackend
 import com.nash.core.model.TrackerConfig
 import com.nash.core.model.VideoRecorder
 import com.nash.core.tracking.ByteTrackTracker
+import com.nash.core.tracking.ocsort.OcSortTracker
 import dagger.Binds
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import javax.inject.Provider
 import javax.inject.Singleton
 
 /**
@@ -129,12 +133,30 @@ abstract class AppModule {
         fun provideAnonymizationEffect(
             processor: AnonymizingSurfaceProcessor,
         ): CameraEffect = AnonymizationCameraEffect(processor)
+
+
+        /** Flip to BYTE_TRACK to A/B both trackers on the same footage. */
+        private val TRACKER_BACKEND = TrackerBackend.BYTE_TRACK
+
+        @Provides
+        @Singleton
+        fun provideOcSortConfig(): OcSortConfig = OcSortConfig()
+
+        @Provides
+        @Singleton
+        fun provideTracker(
+            byteTrack: Provider<ByteTrackTracker>,   // javax.inject.Provider — only the
+            ocSort: Provider<OcSortTracker>          // selected impl is instantiated
+        ): Tracker = when (TRACKER_BACKEND) {
+            TrackerBackend.BYTE_TRACK -> byteTrack.get()
+            TrackerBackend.OC_SORT -> ocSort.get()
+        }
     }
 
-    @Binds
-    abstract fun bindTracker(
-        tracker: ByteTrackTracker
-    ): Tracker
+//    @Binds
+//    abstract fun bindTracker(
+//        tracker: ByteTrackTracker
+//    ): Tracker
 
 
 }

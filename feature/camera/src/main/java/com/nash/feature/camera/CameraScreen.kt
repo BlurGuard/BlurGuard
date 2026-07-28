@@ -58,6 +58,7 @@ fun CameraScreen(
     stats: PipelineStats,
     mode: AnonymizationModeEnum,
     onModeClick: () -> Unit,
+    idStats: CameraViewModel.IdStats,
 ) {
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
@@ -101,6 +102,7 @@ fun CameraScreen(
                     uiState = uiState,
                     modifier = Modifier.align(Alignment.TopCenter)
                 )
+                Text("ids: ${idStats.active} active / ${idStats.totalSeen} seen")
                 Text(
                     text = "%.0f fps · det %.1f/s · %d ms".format(
                         stats.frameFps, stats.fps, stats.detectionLatencyMillis
