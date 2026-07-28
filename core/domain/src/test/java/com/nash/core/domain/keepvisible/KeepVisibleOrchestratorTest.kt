@@ -12,8 +12,10 @@ import com.nash.core.model.TrackId
 import com.nash.core.model.TrackedBox
 import com.nash.core.model.VerificationState
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -86,13 +88,22 @@ class KeepVisibleOrchestratorTest {
     }
 
     @Test
-    fun `a stranger is rejected and stays blurred`() {
+    fun `a stranger is rejected and stays blurred`(): Unit = runTest {
+        // Enroll alice on track 1.
         recognizer.next = { alice }
         orchestrator.requestKeepVisible(TrackId(1))
-        frame(1, face(1))
+        orchestrator.onDetectionFrame(Unit, metadata(frameId = 0), listOf(face(1)))
 
+        // A stranger appears on track 2.
         recognizer.next = { stranger }
-        frame(10, face(2))
+        orchestrator.onDetectionFrame(Unit, metadata(frameId = 10), listOf(face(2)))
+
+        // First mismatch: hysteresis — not rejected yet, but still blurred.
+        assertNotEquals(VerificationState.REJECTED, state.of(TrackId(2)).state)
+        assertFalse(state.decorate(listOf(face(2))).single().keepVisible)
+
+        // Second consecutive mismatch (retry interval elapsed): now rejected.
+        orchestrator.onDetectionFrame(Unit, metadata(frameId = 20), listOf(face(2)))
         assertEquals(VerificationState.REJECTED, state.of(TrackId(2)).state)
         assertFalse(state.decorate(listOf(face(2))).single().keepVisible)
     }
