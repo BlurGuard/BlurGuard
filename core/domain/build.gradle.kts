@@ -24,14 +24,10 @@ android {
 }
 
 dependencies {
-    implementation(project(":core:camera"))
-    implementation(project(":core:blurring"))
-    implementation(project(":core:ml"))
-    implementation(project(":core:tracking"))
-    implementation(project(":core:recognition"))
     implementation(project(":core:data"))
     implementation(project(":core:model"))
     implementation(project(":core:common"))
+    implementation(project(":engine:api"))
     implementation("javax.inject:javax.inject:1")
     implementation(libs.androidx.core.ktx)
 

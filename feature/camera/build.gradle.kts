@@ -25,12 +25,13 @@ android {
 }
 
 dependencies {
-    implementation(project(":core:domain"))
+    implementation(project(":engine:api"))
     implementation(project(":core:data"))
     implementation(project(":core:model"))
     implementation(project(":core:designsystem"))
     implementation(project(":core:common"))
 
+    implementation(libs.camera.view)
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.core.ktx)
     implementation(libs.material)

@@ -32,10 +32,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import com.nash.core.domain.CameraPreviewFactory
-import com.nash.core.model.AnonymizationModeEnum
+import com.nash.engine.api.AnonymizationMode
+import com.nash.engine.api.PreviewTarget
+import com.nash.engine.api.RecordingState
 import com.nash.core.model.PipelineStats
-import com.nash.core.model.RecordingState
 import com.nash.core.model.TrackId
 import com.nash.core.model.TrackVerification
 import com.nash.core.model.TrackedBox
@@ -46,27 +46,24 @@ import com.nash.feature.camera.components.TrackingOverlay
  * Camera recording screen.
  *
  * Displays the camera preview, record/stop controls, status information, and
- * the debug tracking overlay (boxes following detected faces/plates).
- * The preview is rendered via an [AndroidView] using the domain-layer
- * [CameraPreviewFactory] so this module never imports CameraX directly.
+ * the debug tracking overlay.
  */
 @Composable
 fun CameraScreen(
     uiState: CameraUiState,
-    previewFactory: CameraPreviewFactory,
+    previewTarget: PreviewTarget,
     trackedBoxes: List<TrackedBox>,
     onRecordClick: () -> Unit,
     onStopClick: () -> Unit,
     onRequestPermissions: () -> Unit,
     onDismissError: () -> Unit,
     stats: PipelineStats,
-    mode: AnonymizationModeEnum,
+    mode: AnonymizationMode,
     onModeClick: () -> Unit,
     idStats: CameraViewModel.IdStats,
     keepVisible: Map<TrackId, TrackVerification>,
     onFaceTapped: (TrackId) -> Unit,
     onRevokeAllKeepVisible: () -> Unit
-
     ) {
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
@@ -94,8 +91,7 @@ fun CameraScreen(
                 )
             } else {
                 CameraPreview(
-                    factory = previewFactory,
-                    context = context,
+                    previewTarget = previewTarget,
                     modifier = Modifier.fillMaxSize()
                 )
 
@@ -138,7 +134,7 @@ fun CameraScreen(
                         .padding(horizontal = 8.dp, vertical = 4.dp)
                 )
                 Text(
-                    text = mode.displayText,
+                    text = mode.name,
                     color = Color.White,
                     style = MaterialTheme.typography.labelMedium,
                     modifier = Modifier
@@ -163,12 +159,13 @@ fun CameraScreen(
 
 @Composable
 private fun CameraPreview(
-    factory: CameraPreviewFactory,
-    context: Context,
+    previewTarget: PreviewTarget,
     modifier: Modifier = Modifier
 ) {
     AndroidView(
-        factory = { factory.create(context) },
+        factory = {
+            (previewTarget as PreviewTargetImpl).view
+        },
         modifier = modifier
     )
 }

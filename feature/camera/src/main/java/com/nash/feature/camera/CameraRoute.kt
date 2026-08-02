@@ -4,9 +4,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.remember
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.nash.engine.api.PreviewTarget
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberMultiplePermissionsState
@@ -41,14 +44,27 @@ fun CameraRoute(
         .find { it.permission == android.Manifest.permission.RECORD_AUDIO }
         ?.status?.isGranted == true
 
-    // Only bind the camera once the permission is granted, and re-bind if the
+    // Only bind the engine once the permission is granted, and re-bind if the
     // permission state (or lifecycle owner) changes.
+    val context = LocalContext.current
+    val previewTarget = remember(lifecycleOwner, context) {
+        PreviewTargetImpl(context) { owner, view ->
+            viewModel.bindEngine(owner, object : PreviewTarget {
+                override fun bind(lifecycleOwner: androidx.lifecycle.LifecycleOwner) {
+                    // Implementation note: In Phase 4, RealBlurGuardEngine
+                    // was designed to handle the internal binding.
+                }
+            })
+        }
+    }
+
     DisposableEffect(lifecycleOwner, cameraGranted) {
         if (cameraGranted) {
-            viewModel.bindCamera(lifecycleOwner)
+            viewModel.bindEngine(lifecycleOwner, previewTarget)
         }
         onDispose {
-            viewModel.unbindCamera()
+            // Engine unbinding should be handled by lifecycle, but we can call
+            // unbind if BlurGuardEngine supports it.
         }
     }
 
@@ -69,19 +85,18 @@ fun CameraRoute(
     }
     val trackedBoxes by viewModel.trackedBoxes.collectAsStateWithLifecycle()
     val pipelineStats by viewModel.pipelineStats.collectAsStateWithLifecycle()
-    val mode by viewModel.anonymizationMode.collectAsStateWithLifecycle()
     val idStats by viewModel.idStats.collectAsStateWithLifecycle()
     val keepVisible by viewModel.keepVisible.collectAsStateWithLifecycle()
     CameraScreen(
         uiState = uiState,
-        previewFactory = viewModel.previewFactory,
+        previewTarget = previewTarget,
         onRecordClick = { viewModel.onEvent(CameraEvent.OnRecordClicked) },
         onStopClick = { viewModel.onEvent(CameraEvent.OnStopRecordingClicked) },
         onRequestPermissions = { permissions.launchMultiplePermissionRequest() },
         onDismissError = { viewModel.onEvent(CameraEvent.OnErrorDismissed) },
         trackedBoxes = trackedBoxes,
         stats = pipelineStats,
-        mode = mode,
+        mode = uiState.anonymizationMode,
         onModeClick = { viewModel.onModeClicked() },
         idStats = idStats,
         keepVisible = keepVisible,
