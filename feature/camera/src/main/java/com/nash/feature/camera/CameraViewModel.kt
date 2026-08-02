@@ -8,7 +8,6 @@ import com.nash.core.model.PipelineStats
 import com.nash.core.model.TrackId
 import com.nash.core.model.TrackVerification
 import com.nash.core.model.TrackedBox
-import com.nash.core.model.VerificationState
 import com.nash.engine.api.AnonymizationMode
 import com.nash.engine.api.BlurGuardEngine
 import com.nash.engine.api.PreviewTarget
@@ -23,7 +22,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlin.time.Duration.Companion.milliseconds
 
 @HiltViewModel
 class CameraViewModel @Inject constructor(
@@ -32,18 +30,18 @@ class CameraViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val seenIds = mutableSetOf<Long>()
-    private val _idStats: MutableStateFlow<IdStats> = MutableStateFlow(IdStats())
+    private val _idStats = MutableStateFlow(IdStats())
     val idStats: StateFlow<IdStats> = _idStats.asStateFlow()
 
     data class IdStats(val active: Int = 0, val totalSeen: Int = 0)
 
-    private val _uiState: MutableStateFlow<CameraUiState> = MutableStateFlow(CameraUiState())
+    private val _uiState = MutableStateFlow(CameraUiState())
     val uiState: StateFlow<CameraUiState> = _uiState.asStateFlow()
 
     val pipelineStats: StateFlow<PipelineStats> = engine.stats
     val trackedBoxes: StateFlow<List<TrackedBox>> = engine.trackedBoxes
 
-    /** Per-track verification for overlay colors and the revoke chip. */
+    /** Keep-visible verification state, exposed by the engine API. */
     val keepVisible: StateFlow<Map<TrackId, TrackVerification>> = engine.keepVisible
 
     private var enrollTarget: TrackId? = null
@@ -61,26 +59,6 @@ class CameraViewModel @Inject constructor(
             trackedBoxes.collect { boxes ->
                 boxes.forEach { seenIds += it.id.value }
                 _idStats.value = IdStats(active = boxes.size, totalSeen = seenIds.size)
-            }
-        }
-
-        viewModelScope.launch {
-            keepVisible.collect { map ->
-                val target = enrollTarget ?: return@collect
-                when (map[target]?.state) {
-                    VerificationState.TRUSTED -> {
-                        enrollTarget = null
-                        enrollSeenPending = false
-                    }
-                    VerificationState.PENDING -> enrollSeenPending = true
-                    else -> if (enrollSeenPending) {
-                        enrollTarget = null
-                        enrollSeenPending = false
-                        _uiState.update {
-                            it.copy(keepVisibleMessage = "Couldn't verify the face — move closer and try again")
-                        }
-                    }
-                }
             }
         }
     }
@@ -157,6 +135,7 @@ class CameraViewModel @Inject constructor(
     }
 
     private fun updateRecordingState(state: RecordingState) {
+        _uiState.update { it.copy(recordingState = state) }
         when (state) {
             is RecordingState.Recording -> {
                 _uiState.update { it.copy(durationSeconds = (state.durationMillis / 1000).toInt()) }

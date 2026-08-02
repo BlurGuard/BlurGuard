@@ -56,7 +56,7 @@ interface BlurGuardEngine {
     val trackedBoxes: StateFlow<List<TrackedBox>>
 
     /**
-     * Per-track verification for overlay colors and the revoke chip.
+     * Keep-visible verification state per track, for UI badges/messages.
      */
     val keepVisible: StateFlow<Map<TrackId, TrackVerification>>
 

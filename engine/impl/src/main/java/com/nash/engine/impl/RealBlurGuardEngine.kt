@@ -46,11 +46,11 @@ class RealBlurGuardEngine @Inject constructor(
     }
 
     override suspend fun updateAnonymizationMode(mode: AnonymizationMode) {
-        // Implementation note: This will be connected to AnonymizationModeHolder
+        // TODO: connect to AnonymizationModeHolder
     }
 
     override suspend fun updateTrustedFaces(faces: List<TrustedFaceRef>) {
-        // Implementation note: This will be connected to KeepVisibleOrchestrator
+        // TODO: connect to KeepVisibleOrchestrator
     }
 
     override fun observeWarnings(): Flow<EngineWarning> = _warnings.asSharedFlow()
