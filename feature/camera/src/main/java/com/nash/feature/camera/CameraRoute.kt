@@ -70,6 +70,8 @@ fun CameraRoute(
     val trackedBoxes by viewModel.trackedBoxes.collectAsStateWithLifecycle()
     val pipelineStats by viewModel.pipelineStats.collectAsStateWithLifecycle()
     val mode by viewModel.anonymizationMode.collectAsStateWithLifecycle()
+    val idStats by viewModel.idStats.collectAsStateWithLifecycle()
+    val keepVisible by viewModel.keepVisible.collectAsStateWithLifecycle()
     CameraScreen(
         uiState = uiState,
         previewFactory = viewModel.previewFactory,
@@ -80,6 +82,10 @@ fun CameraRoute(
         trackedBoxes = trackedBoxes,
         stats = pipelineStats,
         mode = mode,
-        onModeClick = { viewModel.onModeClicked() }
+        onModeClick = { viewModel.onModeClicked() },
+        idStats = idStats,
+        keepVisible = keepVisible,
+        onFaceTapped = { viewModel.onFaceTapped(it) },
+        onRevokeAllKeepVisible = { viewModel.onRevokeAllKeepVisible() }
     )
 }

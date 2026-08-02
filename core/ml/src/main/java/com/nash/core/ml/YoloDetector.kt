@@ -58,7 +58,7 @@ class YoloDetector @Inject constructor(
         val buffer = ByteBuffer.allocateDirect(model.size).order(ByteOrder.nativeOrder())
         buffer.put(model)
         buffer.rewind()
-        Log.e("YoloDetector", "Model size: ${model.size}")
+//        Log.e("YoloDetector", "Model size: ${model.size}")
         if (config.delegate == DetectorDelegate.NPU) {
 
 
@@ -74,16 +74,16 @@ class YoloDetector @Inject constructor(
                         .setCacheDir(context.cacheDir.absolutePath)
                         .setModelToken("yolo_face_plate_v1")
                 )
-                Log.e("YoloDetector", "Model size: ${model.size}")
+//                Log.e("YoloDetector", "Model size: ${model.size}")
                 val interpreter = Interpreter(
                     buffer,
                     Interpreter.Options().addDelegate(delegate)
                 )
                 nnApiDelegate = delegate
-                Log.e("YoloDetector", "NNAPI delegate created ${interpreter}}")
+//                Log.e("YoloDetector", "NNAPI delegate created ${interpreter}}")
                 return@lazy interpreter
             } catch (e: Exception) {
-                Log.e("YoloDetector", "NNAPI delegate failed", e)
+//                Log.e("YoloDetector", "NNAPI delegate failed", e)
                 // NNAPI unavailable or model unsupported by the driver:
                 // fall through to CPU rather than crashing the pipeline.
                 nnApiDelegate?.close()
@@ -178,10 +178,10 @@ class YoloDetector @Inject constructor(
                 else { if (v > maxScore) maxScore = v }
             }
         }
-        Log.d("YoloDetector", "raw: maxScore=%.3f maxCoord=%.1f".format(maxScore, maxCoord))
+//        Log.d("YoloDetector", "raw: maxScore=%.3f maxCoord=%.1f".format(maxScore, maxCoord))
         val t2 = SystemClock.elapsedRealtimeNanos()
 
-        Log.e("YoloDetector", "Inference done ${output.size}")
+//        Log.e("YoloDetector", "Inference done ${output.size}")
         // --- Decode in buffer space, then rotate to upright space.
         val result = decoder.decode(
             output = output,
@@ -204,13 +204,13 @@ class YoloDetector @Inject constructor(
         val nowMs = SystemClock.uptimeMillis()
         if (nowMs - lastLogUptimeMs >= 1_000L) {
             lastLogUptimeMs = nowMs
-            Log.d(
-                "YoloDetector",
-                "split(ms): pre=%.1f infer=%.1f decode=%.1f total=%.1f (n=%d)".format(
-                    emaPreprocessMs, emaInferenceMs, emaDecodeMs,
-                    emaPreprocessMs + emaInferenceMs + emaDecodeMs, timedFrames
-                )
-            )
+//            Log.d(
+//                "YoloDetector",
+//                "split(ms): pre=%.1f infer=%.1f decode=%.1f total=%.1f (n=%d)".format(
+//                    emaPreprocessMs, emaInferenceMs, emaDecodeMs,
+//                    emaPreprocessMs + emaInferenceMs + emaDecodeMs, timedFrames
+//                )
+//            )
         }
         result
     }

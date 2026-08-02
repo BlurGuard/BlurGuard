@@ -16,7 +16,8 @@ data class CameraUiState(
     val recordingState: RecordingState = RecordingState.Idle,
     val durationSeconds: Int = 0,
     val lastSavedUri: String? = null,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val keepVisibleMessage: String? = null,
 ) {
     val isRecording: Boolean
         get() = recordingState is RecordingState.Recording

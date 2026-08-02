@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -35,7 +36,10 @@ import com.nash.core.domain.CameraPreviewFactory
 import com.nash.core.model.AnonymizationModeEnum
 import com.nash.core.model.PipelineStats
 import com.nash.core.model.RecordingState
+import com.nash.core.model.TrackId
+import com.nash.core.model.TrackVerification
 import com.nash.core.model.TrackedBox
+import com.nash.core.model.VerificationState
 import com.nash.feature.camera.components.TrackingOverlay
 
 /**
@@ -58,7 +62,12 @@ fun CameraScreen(
     stats: PipelineStats,
     mode: AnonymizationModeEnum,
     onModeClick: () -> Unit,
-) {
+    idStats: CameraViewModel.IdStats,
+    keepVisible: Map<TrackId, TrackVerification>,
+    onFaceTapped: (TrackId) -> Unit,
+    onRevokeAllKeepVisible: () -> Unit
+
+    ) {
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -92,15 +101,29 @@ fun CameraScreen(
 
                 // Debug overlay: must sit directly on top of the preview and
                 // share its exact bounds so normalized coords line up.
-//                TrackingOverlay(
-//                    trackedBoxes = trackedBoxes,
-//                    modifier = Modifier.fillMaxSize(),
-//                )
-
+                TrackingOverlay(
+                    trackedBoxes = trackedBoxes,
+                    modifier = Modifier.fillMaxSize(),
+                    verifications = keepVisible,
+                    onFaceTapped = onFaceTapped,
+                )
+                val anyKeptVisible = keepVisible.values.any {
+                    it.state == VerificationState.TRUSTED || it.state == VerificationState.PENDING
+                }
+                if (anyKeptVisible) {
+                    AssistChip(
+                        onClick = onRevokeAllKeepVisible,
+                        label = { Text("Re-blur all") },
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(top = 16.dp)
+                    )
+                }
                 RecordingOverlay(
                     uiState = uiState,
                     modifier = Modifier.align(Alignment.TopCenter)
                 )
+                Text("ids: ${idStats.active} active / ${idStats.totalSeen} seen")
                 Text(
                     text = "%.0f fps · det %.1f/s · %d ms".format(
                         stats.frameFps, stats.fps, stats.detectionLatencyMillis

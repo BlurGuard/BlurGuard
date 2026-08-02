@@ -1,11 +1,17 @@
 package com.nash.core.domain
 
+import com.nash.core.domain.keepvisible.KeepVisibleOrchestrator
 import com.nash.core.model.BoundingBox
 import com.nash.core.model.DetectionBox
 import com.nash.core.model.DetectionClass
 import com.nash.core.model.Detector
+import com.nash.core.model.FaceEmbedding
+import com.nash.core.model.FaceRecognizer
 import com.nash.core.model.FrameMetadata
+import com.nash.core.model.KeepVisibleState
+import com.nash.core.model.RecognitionConfig
 import com.nash.core.model.RenderBoxFeed
+import com.nash.core.model.SessionTrustedPersonStore
 import com.nash.core.model.TrackId
 import com.nash.core.model.TrackedBox
 import com.nash.core.model.Tracker
@@ -86,6 +92,16 @@ class DefaultAnonymizationPipelineTest {
         override fun close() = Unit
     }
 
+    private object NoopRecognizer : FaceRecognizer<String> {
+        override suspend fun embed(
+            frame: String,
+            faceBox: BoundingBox,
+            metadata: FrameMetadata
+        ): FaceEmbedding? = null
+
+        override fun close() = Unit
+    }
+
     // ------------------------------------------------------------------
     // Helpers
     // ------------------------------------------------------------------
@@ -134,12 +150,22 @@ class DefaultAnonymizationPipelineTest {
         detector: Detector<String> = FakeDetector(),
         interval: Long = 3L,
         feed: RenderBoxFeed = RenderBoxFeed(),
-    ) = DefaultAnonymizationPipeline(
-        detectors = listOf(detector),
-        tracker = tracker,
-        detectionInterval = interval,
-        renderBoxFeed = feed,
-    )
+    ): DefaultAnonymizationPipeline<String> {
+        val keepVisibleState = KeepVisibleState()
+        return DefaultAnonymizationPipeline(
+            detectors = listOf(detector),
+            tracker = tracker,
+            detectionInterval = interval,
+            renderBoxFeed = feed,
+            keepVisible = KeepVisibleOrchestrator(
+                recognizer = NoopRecognizer,
+                store = SessionTrustedPersonStore(10,0.25f),
+                state = keepVisibleState,
+                config = RecognitionConfig(),
+            ),
+            keepVisibleState = keepVisibleState,
+        )
+    }
 
     private companion object {
         const val EPS = 1e-4f
