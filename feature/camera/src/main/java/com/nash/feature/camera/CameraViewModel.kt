@@ -32,12 +32,12 @@ class CameraViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val seenIds = mutableSetOf<Long>()
-    private val _idStats = MutableStateFlow(IdStats())
+    private val _idStats: MutableStateFlow<IdStats> = MutableStateFlow(IdStats())
     val idStats: StateFlow<IdStats> = _idStats.asStateFlow()
 
     data class IdStats(val active: Int = 0, val totalSeen: Int = 0)
 
-    private val _uiState = MutableStateFlow(CameraUiState())
+    private val _uiState: MutableStateFlow<CameraUiState> = MutableStateFlow(CameraUiState())
     val uiState: StateFlow<CameraUiState> = _uiState.asStateFlow()
 
     val pipelineStats: StateFlow<PipelineStats> = engine.stats
