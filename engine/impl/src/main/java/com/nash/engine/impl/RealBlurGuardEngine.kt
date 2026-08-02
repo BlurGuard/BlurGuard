@@ -3,6 +3,8 @@ package com.nash.engine.impl
 import androidx.camera.core.ImageProxy
 import androidx.lifecycle.LifecycleOwner
 import com.nash.core.model.PipelineStats
+import com.nash.core.model.TrackId
+import com.nash.core.model.TrackVerification
 import com.nash.core.model.TrackedBox
 import com.nash.engine.api.*
 import com.nash.engine.camera.CameraXCameraController
@@ -55,6 +57,9 @@ class RealBlurGuardEngine @Inject constructor(
 
     override val trackedBoxes: StateFlow<List<TrackedBox>>
         get() = pipeline.trackedBoxes
+
+    override val keepVisible: StateFlow<Map<TrackId, TrackVerification>>
+        get() = pipeline.keepVisibleState.verifications
 
     override val stats: StateFlow<PipelineStats>
         get() = pipeline.stats

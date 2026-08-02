@@ -31,7 +31,7 @@ import kotlinx.coroutines.flow.asStateFlow
 class DefaultAnonymizationPipeline<F>(
     private val detectors: List<Detector<F>>,
     private val tracker: Tracker,
-    private val keepVisibleState: KeepVisibleState,
+    val keepVisibleState: KeepVisibleState,
     private val keepVisible: KeepVisibleOrchestrator<F>,
     private val renderBoxFeed: RenderBoxFeed,
     private val detectionInterval: Long = 2L

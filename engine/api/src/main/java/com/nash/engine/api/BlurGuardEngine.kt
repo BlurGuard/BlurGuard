@@ -2,6 +2,8 @@ package com.nash.engine.api
 
 import androidx.lifecycle.LifecycleOwner
 import com.nash.core.model.PipelineStats
+import com.nash.core.model.TrackId
+import com.nash.core.model.TrackVerification
 import com.nash.core.model.TrackedBox
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
@@ -52,6 +54,11 @@ interface BlurGuardEngine {
      * No pixel data is exposed here.
      */
     val trackedBoxes: StateFlow<List<TrackedBox>>
+
+    /**
+     * Per-track verification for overlay colors and the revoke chip.
+     */
+    val keepVisible: StateFlow<Map<TrackId, TrackVerification>>
 
     /**
      * Performance metrics for the pipeline.

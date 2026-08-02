@@ -43,10 +43,8 @@ class CameraViewModel @Inject constructor(
     val pipelineStats: StateFlow<PipelineStats> = engine.stats
     val trackedBoxes: StateFlow<List<TrackedBox>> = engine.trackedBoxes
 
-    // TODO: Verify if keepVisible state should come from engine/api or core/data
-    // For now, keeping it as is but it might need to be moved to engine/api if it's per-frame logic.
-    // Based on original code, it was observing a use case.
-    val keepVisible: StateFlow<Map<TrackId, TrackVerification>> = MutableStateFlow(emptyMap())
+    /** Per-track verification for overlay colors and the revoke chip. */
+    val keepVisible: StateFlow<Map<TrackId, TrackVerification>> = engine.keepVisible
 
     private var enrollTarget: TrackId? = null
     private var enrollSeenPending = false
@@ -63,6 +61,26 @@ class CameraViewModel @Inject constructor(
             trackedBoxes.collect { boxes ->
                 boxes.forEach { seenIds += it.id.value }
                 _idStats.value = IdStats(active = boxes.size, totalSeen = seenIds.size)
+            }
+        }
+
+        viewModelScope.launch {
+            keepVisible.collect { map ->
+                val target = enrollTarget ?: return@collect
+                when (map[target]?.state) {
+                    VerificationState.TRUSTED -> {
+                        enrollTarget = null
+                        enrollSeenPending = false
+                    }
+                    VerificationState.PENDING -> enrollSeenPending = true
+                    else -> if (enrollSeenPending) {
+                        enrollTarget = null
+                        enrollSeenPending = false
+                        _uiState.update {
+                            it.copy(keepVisibleMessage = "Couldn't verify the face — move closer and try again")
+                        }
+                    }
+                }
             }
         }
     }
@@ -139,9 +157,6 @@ class CameraViewModel @Inject constructor(
     }
 
     private fun updateRecordingState(state: RecordingState) {
-        // Map engine RecordingState to UI RecordingState
-        // This requires updating CameraUiState.recordingState to handle the new engine types or mapping them.
-        // For now, I'll keep the UI state as is and map common states.
         when (state) {
             is RecordingState.Recording -> {
                 _uiState.update { it.copy(durationSeconds = (state.durationMillis / 1000).toInt()) }
