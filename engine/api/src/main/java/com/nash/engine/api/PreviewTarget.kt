@@ -1,5 +1,6 @@
 package com.nash.engine.api
 
+import android.view.View
 import androidx.lifecycle.LifecycleOwner
 
 /**
@@ -8,8 +9,8 @@ import androidx.lifecycle.LifecycleOwner
  */
 interface PreviewTarget {
     /**
-     * Called by the engine to bind its output to this target.
-     * The engine owns the lifecycle of the binding.
+     * The Android View that displays the preview.
+     * The engine attaches its camera output to this view internally.
      */
-    fun bind(lifecycleOwner: LifecycleOwner)
+    val view: View
 }

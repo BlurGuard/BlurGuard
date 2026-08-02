@@ -151,6 +151,17 @@ class CameraXCameraController @Inject constructor(
     }
 
     /**
+     * Attaches an externally created [PreviewView] as the preview output.
+     * Safe to call before or after [bind].
+     */
+    fun attachPreviewView(view: View) {
+        val pv = view as? PreviewView
+            ?: error("PreviewTarget.view must be a CameraX PreviewView")
+        previewView = pv
+        attachSurfaceProviderIfReady()
+    }
+
+    /**
      * Binds the camera pipeline to the supplied [lifecycleOwner].
      *
      * Must be called after [createPreviewView] when the screen enters composition.

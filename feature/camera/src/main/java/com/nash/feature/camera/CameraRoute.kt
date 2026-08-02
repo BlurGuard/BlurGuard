@@ -1,5 +1,6 @@
 package com.nash.feature.camera
 
+import android.Manifest
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -31,31 +32,24 @@ fun CameraRoute(
 
     val permissions = rememberMultiplePermissionsState(
         permissions = listOf(
-            android.Manifest.permission.CAMERA,
-            android.Manifest.permission.RECORD_AUDIO
+            Manifest.permission.CAMERA,
+            Manifest.permission.RECORD_AUDIO
         )
     )
 
     val cameraGranted = permissions.permissions
-        .find { it.permission == android.Manifest.permission.CAMERA }
+        .find { it.permission == Manifest.permission.CAMERA }
         ?.status?.isGranted == true
 
     val audioGranted = permissions.permissions
-        .find { it.permission == android.Manifest.permission.RECORD_AUDIO }
+        .find { it.permission == Manifest.permission.RECORD_AUDIO }
         ?.status?.isGranted == true
 
     // Only bind the engine once the permission is granted, and re-bind if the
     // permission state (or lifecycle owner) changes.
     val context = LocalContext.current
     val previewTarget = remember(lifecycleOwner, context) {
-        PreviewTargetImpl(context) { owner, view ->
-            viewModel.bindEngine(owner, object : PreviewTarget {
-                override fun bind(lifecycleOwner: androidx.lifecycle.LifecycleOwner) {
-                    // Implementation note: In Phase 4, RealBlurGuardEngine
-                    // was designed to handle the internal binding.
-                }
-            })
-        }
+        PreviewTargetImpl(context)
     }
 
     DisposableEffect(lifecycleOwner, cameraGranted) {
