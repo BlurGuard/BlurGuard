@@ -4,6 +4,7 @@
     <bytecodeTargetLevel target="11">
       <module name="BlurGuard.core.blurring" target="21" />
       <module name="BlurGuard.core.camera" target="21" />
+      <module name="BlurGuard.core.domain" target="21" />
       <module name="BlurGuard.core.ml" target="21" />
       <module name="BlurGuard.core.recognition" target="21" />
     </bytecodeTargetLevel>

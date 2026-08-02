@@ -2,12 +2,15 @@ package com.nash.engine.impl
 
 import androidx.camera.core.ImageProxy
 import androidx.lifecycle.LifecycleOwner
+import com.nash.core.model.AnonymizationModeEnum
+import com.nash.core.model.AnonymizationModeHolder
 import com.nash.core.model.PipelineStats
 import com.nash.core.model.TrackId
 import com.nash.core.model.TrackVerification
 import com.nash.core.model.TrackedBox
 import com.nash.engine.api.*
 import com.nash.engine.camera.CameraXCameraController
+import com.nash.engine.impl.keepvisible.KeepVisibleController
 import kotlinx.coroutines.flow.*
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -15,12 +18,17 @@ import javax.inject.Singleton
 @Singleton
 class RealBlurGuardEngine @Inject constructor(
     private val controller: CameraXCameraController,
-    private val pipeline: DefaultAnonymizationPipeline<ImageProxy>
+    private val pipeline: DefaultAnonymizationPipeline<ImageProxy>,
+    private val modeHolder: AnonymizationModeHolder,
+    private val keepVisibleController: KeepVisibleController
 ) : BlurGuardEngine {
 
     private val _warnings = MutableSharedFlow<EngineWarning>()
 
     override fun bind(lifecycleOwner: LifecycleOwner, previewTarget: PreviewTarget, config: EngineConfig) {
+        // Apply initial config before frames start flowing.
+        modeHolder.set(config.initialMode.toCore())
+        config.initialTrustedFaces.forEach { keepVisibleController.requestKeepVisible(it.trackId) }
         controller.bind(lifecycleOwner)
     }
 
@@ -46,11 +54,16 @@ class RealBlurGuardEngine @Inject constructor(
     }
 
     override suspend fun updateAnonymizationMode(mode: AnonymizationMode) {
-        // TODO: connect to AnonymizationModeHolder
+        modeHolder.set(mode.toCore())
     }
 
     override suspend fun updateTrustedFaces(faces: List<TrustedFaceRef>) {
-        // TODO: connect to KeepVisibleOrchestrator
+        if (faces.isEmpty()) {
+            // Empty list means "re-blur everyone and forget trusted persons".
+            keepVisibleController.revokeAll()
+        } else {
+            faces.forEach { keepVisibleController.requestKeepVisible(it.trackId) }
+        }
     }
 
     override fun observeWarnings(): Flow<EngineWarning> = _warnings.asSharedFlow()
@@ -63,4 +76,12 @@ class RealBlurGuardEngine @Inject constructor(
 
     override val stats: StateFlow<PipelineStats>
         get() = pipeline.stats
+}
+
+/** Maps the public engine-api mode to the core renderer mode. */
+private fun AnonymizationMode.toCore(): AnonymizationModeEnum = when (this) {
+    AnonymizationMode.BOUNDING -> AnonymizationModeEnum.BOUNDING
+    AnonymizationMode.BLUR -> AnonymizationModeEnum.BLUR
+    AnonymizationMode.PIXELATE -> AnonymizationModeEnum.PIXELATE
+    AnonymizationMode.BLACK_BOX -> AnonymizationModeEnum.BLACKBOX
 }

@@ -33,6 +33,7 @@ import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Provider
 import javax.inject.Singleton
+import com.nash.engine.impl.keepvisible.KeepVisibleController
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -47,7 +48,11 @@ object EngineImplModule {
         config: RecognitionConfig
     ): KeepVisibleOrchestrator<ImageProxy> =
         KeepVisibleOrchestrator(recognizer, store, state, config)
-
+    @Provides
+    @Singleton
+    fun provideKeepVisibleController(
+        orchestrator: KeepVisibleOrchestrator<ImageProxy>
+    ): KeepVisibleController = orchestrator
     @Provides
     @Singleton
     fun provideAnonymizationPipeline(

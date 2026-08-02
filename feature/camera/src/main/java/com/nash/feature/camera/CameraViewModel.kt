@@ -161,8 +161,8 @@ class CameraViewModel @Inject constructor(
         val nextMode = when (currentMode) {
             AnonymizationMode.BLUR -> AnonymizationMode.PIXELATE
             AnonymizationMode.PIXELATE -> AnonymizationMode.BLACK_BOX
-            AnonymizationMode.BLACK_BOX -> AnonymizationMode.NONE
-            AnonymizationMode.NONE -> AnonymizationMode.BLUR
+            AnonymizationMode.BLACK_BOX -> AnonymizationMode.BOUNDING
+            AnonymizationMode.BOUNDING -> AnonymizationMode.BLUR
         }
         _uiState.update { it.copy(anonymizationMode = nextMode) }
         viewModelScope.launch {
