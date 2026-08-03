@@ -54,18 +54,15 @@ dependencies {
     implementation(project(":feature:gallery"))
     implementation(project(":feature:settings"))
 
+    // Engine
+    implementation(project(":engine:api"))
+    implementation(project(":engine:impl"))
+
     // Core
     implementation(project(":core:common"))
     implementation(project(":core:model"))
-    api(libs.camera.core)
-    implementation(project(":core:blurring"))
-    implementation(project(":core:ml"))
-    implementation(project(":core:tracking"))
-    implementation(project(":core:recognition"))
-    implementation(project(":core:domain"))
     implementation(project(":core:data"))
     implementation(project(":core:designsystem"))
-    implementation(project(":core:camera"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)

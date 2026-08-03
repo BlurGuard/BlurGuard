@@ -27,12 +27,6 @@ include(":app")
 // Core
 include(":core:common")
 include(":core:model")
-include(":core:camera")
-include(":core:blurring")
-include(":core:ml")
-include(":core:tracking")
-include(":core:recognition")
-include(":core:domain")
 include(":core:data")
 include(":core:designsystem")
 
@@ -40,6 +34,15 @@ include(":core:designsystem")
 include(":feature:camera")
 include(":feature:gallery")
 include(":feature:settings")
+
+// Engine
+include(":engine:api")
+include(":engine:impl")
+include(":engine:camera")
+include(":engine:render")
+include(":engine:ml")
+include(":engine:tracking")
+include(":engine:recognition")
 
 // Benchmarks
 include(":benchmark")

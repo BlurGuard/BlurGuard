@@ -1,12 +1,12 @@
 package com.nash.feature.camera
 
-import com.nash.core.model.RecordingState
+import com.nash.engine.api.AnonymizationMode
+import com.nash.engine.api.RecordingState
 
 /**
  * Immutable UI state for the camera recording screen.
  *
- * Contains no frame, pixel, or Surface data — only primitives and the opaque
- * [RecordingState] from the domain layer.
+ * Contains no frame, pixel, or Surface data.
  */
 data class CameraUiState(
     val cameraPermissionGranted: Boolean = false,
@@ -18,6 +18,7 @@ data class CameraUiState(
     val lastSavedUri: String? = null,
     val errorMessage: String? = null,
     val keepVisibleMessage: String? = null,
+    val anonymizationMode: AnonymizationMode = AnonymizationMode.BLUR
 ) {
     val isRecording: Boolean
         get() = recordingState is RecordingState.Recording
