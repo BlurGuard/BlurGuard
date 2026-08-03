@@ -11,6 +11,7 @@ import androidx.camera.core.SurfaceProcessor
 import androidx.camera.core.SurfaceRequest
 import com.nash.core.model.AnonymizationModeHolder
 import com.nash.core.model.RenderBoxFeed
+import com.nash.core.model.TrackedBox
 import com.nash.engine.render.gl.EglContextManager
 import com.nash.engine.render.gl.SurfaceOutputRegistry
 import com.nash.engine.render.renderer.RenderFrame
@@ -21,21 +22,12 @@ import java.util.concurrent.Executor
 /**
  * Coordinator for the anonymization pipeline (FR-04/FR-05).
  *
- * Draws the camera frame to every output (preview + video encoder) and covers
- * tracked regions according to [AnonymizationModeHolder.mode]. The actual work
- * is delegated to small collaborators:
- *  - [com.nash.engine.render.gl.EglContextManager]: EGL display/context/pbuffer lifecycle
- *  - [com.nash.engine.render.gl.SurfaceOutputRegistry]: output surface <-> EGL surface mapping
- *  - [com.nash.engine.render.gl.ShaderProgramFactory]: shader compilation and linking
- *  - [com.nash.engine.render.renderer.CameraFrameRenderer]: camera texture + full-frame draw
- *  - [com.nash.engine.render.renderer.AnonymizationModeRenderer]s via [com.nash.engine.render.renderer.ModeRendererFactory]: per-mode box rendering
+ * Only: receives input/output surfaces, reads the latest boxes, chooses the
+ * mode renderer, renders each output, and sets the presentation time before
+ * swapping buffers. All GL/EGL work is delegated to `gl/` and `renderer/`.
  *
- * Fail-closed: [com.nash.engine.render.renderer.BlurRenderer] falls back to [com.nash.engine.render.renderer.BlackBoxRenderer] whenever the
- * blurred frame copy is unavailable, so raw pixels are never shown.
- *
- * This class only: receives input/output surfaces, reads the latest boxes,
- * chooses the mode renderer, renders each output, and sets the presentation
- * time before swapping buffers.
+ * Fail-closed: BlurRenderer falls back to BlackBoxRenderer whenever blur
+ * preparation cannot be proven valid, so raw pixels are never shown.
  */
 class AnonymizingSurfaceProcessor(
     private val renderBoxFeed: RenderBoxFeed,
@@ -52,6 +44,9 @@ class AnonymizingSurfaceProcessor(
     /** Created lazily on the GL thread once the EGL context exists. */
     private var pipeline: RenderPipeline? = null
 
+    @Volatile
+    private var isShutdown = false
+
     // Input
     private var surfaceTexture: SurfaceTexture? = null
     private var inputSurface: Surface? = null
@@ -59,10 +54,12 @@ class AnonymizingSurfaceProcessor(
     private var inputHeight = 0
 
     // Per-frame scratch, reused: no allocation in the hot loop.
+    // GL-thread confined; never expose outside the render call.
     private val texMatrix = FloatArray(16)
     private val cameraMatrix = FloatArray(16)
     private val renderFrame = RenderFrame()
     private val renderOutput = RenderOutput()
+    private val boxesScratch = ArrayList<TrackedBox>()
     private var lastKept = -1
 
     // ------------------------------------------------------------------
@@ -71,11 +68,20 @@ class AnonymizingSurfaceProcessor(
 
     override fun onInputSurface(request: SurfaceRequest) {
         glExecutor.execute {
+            if (isShutdown) {
+                request.willNotProvideSurface()
+                return@execute
+            }
             val pipeline = initGlIfNeeded()
             inputWidth = request.resolution.width
             inputHeight = request.resolution.height
             pipeline.onInputChanged()
 
+            // NOTE: cleanup of a replaced input surface is callback-owned.
+            // CameraX signals through provideSurface's result listener when it
+            // has stopped writing to the previous surface; releasing it
+            // eagerly here could destroy a surface the camera HAL is still
+            // producing into. We only re-point our references.
             val st = SurfaceTexture(pipeline.cameraTextureId).apply {
                 setDefaultBufferSize(inputWidth, inputHeight)
             }
@@ -94,6 +100,7 @@ class AnonymizingSurfaceProcessor(
             }
 
             st.setOnFrameAvailableListener({
+                if (isShutdown) return@setOnFrameAvailableListener
                 try {
                     st.updateTexImage()
                     st.getTransformMatrix(texMatrix)
@@ -107,6 +114,10 @@ class AnonymizingSurfaceProcessor(
 
     override fun onOutputSurface(surfaceOutput: SurfaceOutput) {
         glExecutor.execute {
+            if (isShutdown) {
+                surfaceOutput.close()
+                return@execute
+            }
             initGlIfNeeded()
             outputs.register(surfaceOutput, glExecutor)
         }
@@ -120,8 +131,12 @@ class AnonymizingSurfaceProcessor(
         val pipeline = pipeline ?: return
         if (outputs.isEmpty()) return
         val snapshot = renderBoxFeed.latest()
-        val boxes = snapshot.boxes.filter { !it.keepVisible }
-        logKeepVisibleChanges(snapshot.boxes.count { it.keepVisible })
+
+        boxesScratch.clear()
+        snapshot.boxes.filterTo(boxesScratch) { !it.keepVisible }
+        val boxes = boxesScratch
+
+        if (ENABLE_RENDER_DIAGNOSTICS) logKeepVisibleChanges(snapshot)
 
         renderFrame.update(texMatrix, inputWidth, inputHeight, snapshot.rotationDegrees)
         val renderer = pipeline.rendererFactory.forMode(modeHolder.mode.value)
@@ -129,10 +144,10 @@ class AnonymizingSurfaceProcessor(
         // Shared per-frame work (e.g. the blurred frame copy), once for all outputs.
         if (boxes.isNotEmpty()) renderer.prepare(boxes, renderFrame)
 
-        for ((output, eglSurface) in outputs.asMap()) {
+        outputs.forEachOutput { output, eglSurface ->
             if (!egl.makeCurrent(eglSurface)) {
                 Log.w(TAG, "eglMakeCurrent failed for output")
-                continue
+                return@forEachOutput
             }
             val w = output.size.width
             val h = output.size.height
@@ -153,10 +168,11 @@ class AnonymizingSurfaceProcessor(
         }
     }
 
-    private fun logKeepVisibleChanges(kept: Int) {
+    private fun logKeepVisibleChanges(snapshot: RenderBoxFeed.Snapshot) {
+        val kept = snapshot.boxes.count { it.keepVisible }
         if (kept != lastKept) {
             lastKept = kept
-            Log.d("Renderer", "keepVisible boxes in feed: $kept")
+            Log.d(TAG, "keepVisible boxes in feed: $kept")
         }
     }
 
@@ -166,11 +182,13 @@ class AnonymizingSurfaceProcessor(
     }
 
     fun shutdown() {
+        isShutdown = true
         glExecutor.execute {
             pipeline?.let {
                 egl.makePbufferCurrent()
                 it.release()
             }
+            pipeline = null
             outputs.releaseAll()
             egl.release()
             glThread.quitSafely()
@@ -179,5 +197,8 @@ class AnonymizingSurfaceProcessor(
 
     private companion object {
         const val TAG = "AnonProcessor"
+
+        /** Keep false in production: no logging from the render hot path. */
+        const val ENABLE_RENDER_DIAGNOSTICS = false
     }
 }

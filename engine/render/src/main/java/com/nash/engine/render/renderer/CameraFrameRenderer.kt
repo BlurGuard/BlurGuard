@@ -27,6 +27,11 @@ internal class CameraFrameRenderer(
         quadDrawer.drawQuad(programs.camera, matrix, quadDrawer.fullQuad, ::bindCameraTexture)
     }
 
+    /** GL thread, context current. Deletes the OES texture this renderer owns. */
+    fun release() {
+        GLES20.glDeleteTextures(1, intArrayOf(textureId), 0)
+    }
+
     private fun createInputTexture(): Int {
         val tex = IntArray(1)
         GLES20.glGenTextures(1, tex, 0)

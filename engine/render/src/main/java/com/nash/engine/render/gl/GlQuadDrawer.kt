@@ -80,13 +80,21 @@ internal class GlQuadDrawer {
     }
 }
 
-/** BoundingBox (normalized, top-left origin) -> GL pixel rect (bottom-left origin). */
-internal fun toPixelRect(b: BoundingBox, widthPx: Int, heightPx: Int): IntArray {
-    val x = (b.left * widthPx).toInt()
-    val y = ((1f - b.bottom) * heightPx).toInt()
-    val w = ((b.right - b.left) * widthPx).toInt()
-    val h = ((b.bottom - b.top) * heightPx).toInt()
-    return intArrayOf(x, y, w, h)
+/** Reusable mutable pixel rect: avoids per-box allocations. GL-thread confined. */
+internal class PixelRect {
+    var x = 0
+    var y = 0
+    var w = 0
+    var h = 0
+}
+
+/** BoundingBox (normalized, top-left origin) -> GL pixel rect (bottom-left origin), filled into [into]. */
+internal fun toPixelRect(b: BoundingBox, widthPx: Int, heightPx: Int, into: PixelRect): PixelRect {
+    into.x = (b.left * widthPx).toInt()
+    into.y = ((1f - b.bottom) * heightPx).toInt()
+    into.w = ((b.right - b.left) * widthPx).toInt()
+    into.h = ((b.bottom - b.top) * heightPx).toInt()
+    return into
 }
 
 internal fun scissorClear(x: Int, y: Int, w: Int, h: Int) {

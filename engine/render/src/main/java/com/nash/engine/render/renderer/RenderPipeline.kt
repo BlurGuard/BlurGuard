@@ -7,7 +7,7 @@ import com.nash.engine.render.gl.ShaderPrograms
 
 /**
  * Aggregates the GL-thread render collaborators. Must be constructed on the
- * GL thread with the EGL context current (after [com.nash.engine.render.gl.EglContextManager.initIfNeeded]).
+ * GL thread with the EGL context already current.
  */
 internal class RenderPipeline(egl: EglContextManager) {
 
@@ -33,6 +33,10 @@ internal class RenderPipeline(egl: EglContextManager) {
     /** Called when the camera input surface changes. */
     fun onInputChanged() = blurRenderer.invalidate()
 
-    /** GL thread, context current. */
-    fun release() = blurRenderer.release()
+    /** Releases every GL resource this pipeline owns. GL thread, context current. */
+    fun release() {
+        blurRenderer.release()
+        cameraFrameRenderer.release()
+        programs.release()
+    }
 }

@@ -5,7 +5,7 @@ import androidx.camera.core.SurfaceOutput
 import java.util.concurrent.Executor
 
 /**
- * Owns the mapping from CameraX [androidx.camera.core.SurfaceOutput]s (preview + video encoder) to
+ * Owns the mapping from CameraX [SurfaceOutput]s (preview + video encoder) to
  * their EGL window surfaces, and destroys EGL surfaces when outputs close.
  * GL-thread only.
  */
@@ -13,12 +13,19 @@ internal class SurfaceOutputRegistry(
     private val egl: EglContextManager,
 ) {
 
-    private val outputs = LinkedHashMap<SurfaceOutput, EGLSurface>()
+    /**
+     * Not private only because [forEachOutput] is inline (Kotlin forbids
+     * inline functions from accessing less-visible members). Never touch
+     * this outside SurfaceOutputRegistry. GL-thread only.
+     */
+    internal val outputs = LinkedHashMap<SurfaceOutput, EGLSurface>()
 
     fun isEmpty(): Boolean = outputs.isEmpty()
 
-    /** Live view for per-frame iteration. Do not mutate; GL-thread only. */
-    fun asMap(): Map<SurfaceOutput, EGLSurface> = outputs
+    /** Allocation-free per-frame iteration. GL-thread only. */
+    inline fun forEachOutput(block: (SurfaceOutput, EGLSurface) -> Unit) {
+        for ((output, surface) in outputs) block(output, surface)
+    }
 
     /** EGL must already be initialized. [glExecutor] receives the close callback. */
     fun register(surfaceOutput: SurfaceOutput, glExecutor: Executor) {

@@ -17,7 +17,15 @@ internal class ShaderPrograms(
     val pixelate: GlProgram,
     val blur: GlProgram,
     val overlay: GlProgram,
-)
+) {
+    /** GL thread, context current. */
+    fun release() {
+        GLES20.glDeleteProgram(camera.id)
+        GLES20.glDeleteProgram(pixelate.id)
+        GLES20.glDeleteProgram(blur.id)
+        GLES20.glDeleteProgram(overlay.id)
+    }
+}
 
 /**
  * Compiles and links the anonymization shaders. Must be used on the GL thread
@@ -32,6 +40,7 @@ internal class ShaderProgramFactory {
         overlay = GlProgram(linkProgram(VERTEX_SHADER, OVERLAY_FRAGMENT)),
     )
 
+    // linkProgram / compileShader / shader sources unchanged from current branch
     private fun linkProgram(vertexSrc: String, fragmentSrc: String): Int {
         val vs = compileShader(GLES20.GL_VERTEX_SHADER, vertexSrc)
         val fs = compileShader(GLES20.GL_FRAGMENT_SHADER, fragmentSrc)
@@ -62,6 +71,8 @@ internal class ShaderProgramFactory {
     }
 
     private companion object {
+        // VERTEX_SHADER, CAMERA_FRAGMENT, PIXELATE_FRAGMENT, BLUR_FRAGMENT,
+        // OVERLAY_FRAGMENT — unchanged, keep exactly as on the branch.
         val VERTEX_SHADER = """
             attribute vec4 aPosition;
             attribute vec4 aTexCoord;

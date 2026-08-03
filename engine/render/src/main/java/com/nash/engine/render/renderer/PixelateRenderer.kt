@@ -15,14 +15,9 @@ internal class PixelateRenderer(
 
     override fun render(boxes: List<TrackedBox>, frame: RenderFrame, output: RenderOutput) {
         val p = programs.pixelate
-        val gridY = RenderTuning.PIXELATE_BLOCKS_X * frame.inputHeight.toFloat() / max(
-            1,
-            frame.inputWidth
-        )
+        val gridY = RenderTuning.PIXELATE_BLOCKS_X * frame.inputHeight.toFloat() / max(1, frame.inputWidth)
         boxes.forEach { tracked ->
-            quadDrawer.fillBoxQuad(
-                tracked.box.dilated(RenderTuning.BOX_DILATION).rotatedFromUpright(frame.rotationDegrees)
-            )
+            quadDrawer.fillBoxQuad(tracked.toRenderBox(frame.rotationDegrees))
             quadDrawer.drawQuad(
                 p, output.cameraMatrix, quadDrawer.boxQuad, cameraFrameRenderer::bindCameraTexture
             ) {

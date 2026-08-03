@@ -12,8 +12,10 @@ import kotlin.math.max
  * BLUR mode: sample a downscaled, two-pass Gaussian-blurred copy of the frame.
  * Owns the offscreen ping-pong FBO targets.
  *
- * Fail-closed: if the blurred copy is not ready, [render] delegates to
- * [failClosedFallback] so boxes are drawn black instead of being skipped.
+ * Fail-closed invariant: [blurTextureReady] becomes true ONLY when blur
+ * targets exist, both FBOs are complete, and the camera matrix inversion
+ * succeeded. In every other case [render] delegates to [failClosedFallback],
+ * so raw pixels are never shown.
  */
 internal class BlurRenderer(
     private val egl: EglContextManager,
@@ -41,9 +43,16 @@ internal class BlurRenderer(
     override fun prepare(boxes: List<TrackedBox>, frame: RenderFrame) {
         blurTextureReady = false
         if (boxes.isEmpty()) return
+
+        // Fail closed: the overlay pass needs the inverse camera transform.
+        // If it cannot be computed, don't waste GPU passes — render() will
+        // fall back to black boxes.
+        if (!Matrix.invertM(texMatrixInv, 0, frame.texMatrix, 0)) return
+
         egl.makePbufferCurrent()
         ensureBlurTargets(frame.inputWidth, frame.inputHeight)
-        if (fboWidth == 0) return // fail closed: render() falls back to black boxes
+        if (fboWidth == 0) return // targets missing or FBO incomplete -> fail closed
+
         GLES20.glViewport(0, 0, fboWidth, fboHeight)
 
         // Pass 1: camera -> fbo0 (downsample, camera transform applied)
@@ -68,9 +77,6 @@ internal class BlurRenderer(
         }) { GLES20.glUniform2f(it.uTexOffset, 0f, 1f / fboHeight) }
 
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
-        // Blur texture is in pre-output space: needed to strip the camera
-        // matrix back out of the per-output transform during render().
-        Matrix.invertM(texMatrixInv, 0, frame.texMatrix, 0)
         blurTextureReady = true
     }
 
@@ -80,12 +86,12 @@ internal class BlurRenderer(
             failClosedFallback.render(boxes, frame, output)
             return
         }
+        // Blur texture is in pre-output space: strip the camera matrix back
+        // out of the per-output transform.
         Matrix.multiplyMM(overlayMatrix, 0, texMatrixInv, 0, output.cameraMatrix, 0)
         val p = programs.overlay
         boxes.forEach { tracked ->
-            quadDrawer.fillBoxQuad(
-                tracked.box.dilated(RenderTuning.BOX_DILATION).rotatedFromUpright(frame.rotationDegrees)
-            )
+            quadDrawer.fillBoxQuad(tracked.toRenderBox(frame.rotationDegrees))
             quadDrawer.drawQuad(p, overlayMatrix, quadDrawer.boxQuad, ::bindBlurTexture)
         }
     }
@@ -123,11 +129,21 @@ internal class BlurRenderer(
                 GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0,
                 GLES20.GL_TEXTURE_2D, fboTexIds[i], 0
             )
+            if (!isFramebufferComplete()) {
+                // Fail closed: leave targets released, fboWidth stays 0 and
+                // prepare() will bail before setting blurTextureReady.
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+                releaseBlurTargets()
+                return
+            }
         }
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
         fboWidth = w
         fboHeight = h
     }
+
+    private fun isFramebufferComplete(): Boolean =
+        GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER) == GLES20.GL_FRAMEBUFFER_COMPLETE
 
     private fun releaseBlurTargets() {
         if (fboIds[0] != 0) {

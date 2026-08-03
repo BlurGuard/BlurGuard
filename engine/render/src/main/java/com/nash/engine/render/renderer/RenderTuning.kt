@@ -11,4 +11,10 @@ internal object RenderTuning {
 
     /** Safety margin around tracked boxes. */
     const val BOX_DILATION = 0.25f
+
+    /** Outline (BOUNDING debug mode) color. */
+    const val OUTLINE_R = 0f
+    const val OUTLINE_G = 1f
+    const val OUTLINE_B = 0f
+    const val OUTLINE_A = 1f
 }
