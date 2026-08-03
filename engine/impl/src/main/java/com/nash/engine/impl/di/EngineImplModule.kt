@@ -4,7 +4,7 @@ import androidx.camera.core.CameraEffect
 import androidx.camera.core.ImageProxy
 import com.nash.engine.render.AnonymizationCameraEffect
 import com.nash.engine.render.AnonymizingSurfaceProcessor
-import com.nash.engine.camera.CameraXCameraController
+import com.nash.engine.camera.CameraXFacade
 import com.nash.engine.ml.MediaPipeFaceDetector
 import com.nash.engine.ml.YoloDetector
 import com.nash.engine.recognition.MobileFaceNetRecognizer
