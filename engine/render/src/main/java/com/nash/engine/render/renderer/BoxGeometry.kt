@@ -1,8 +1,8 @@
-package com.nash.engine.render
+package com.nash.engine.render.renderer
 
 import com.nash.core.model.BoundingBox
+import com.nash.core.model.TrackedBox
 
-/** Grow the box by [fraction] of its own size on every side (privacy headroom). */
 internal fun BoundingBox.dilated(fraction: Float): BoundingBox {
     val dx = (right - left) * fraction
     val dy = (bottom - top) * fraction
@@ -25,3 +25,7 @@ private fun BoundingBox.rotated(rotationDegrees: Int): BoundingBox =
 /** Inverse of rotatedToUpright: map an upright-space box back into buffer space. */
 internal fun BoundingBox.rotatedFromUpright(rotationDegrees: Int): BoundingBox =
     rotated((360 - rotationDegrees) % 360)
+
+/** The region as actually anonymized: dilated by the safety margin, mapped into buffer space. */
+internal fun TrackedBox.toRenderBox(rotationDegrees: Int): BoundingBox =
+    box.dilated(RenderTuning.BOX_DILATION).rotatedFromUpright(rotationDegrees)
