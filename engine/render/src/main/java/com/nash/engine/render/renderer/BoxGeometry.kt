@@ -1,4 +1,4 @@
-package com.nash.engine.render
+package com.nash.engine.render.renderer
 
 import com.nash.core.model.BoundingBox
 
