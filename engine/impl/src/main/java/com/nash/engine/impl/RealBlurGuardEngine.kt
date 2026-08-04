@@ -4,14 +4,16 @@ import androidx.camera.core.ImageProxy
 import androidx.lifecycle.LifecycleOwner
 import com.nash.core.model.AnonymizationModeEnum
 import com.nash.core.model.AnonymizationModeHolder
+import com.nash.core.model.FrameSource
 import com.nash.core.model.RecordingConfig
 import com.nash.core.model.RecordingStartResult
 import com.nash.core.model.TrackId
 import com.nash.core.model.TrackVerification
 import com.nash.core.model.TrackedBox
 import com.nash.core.model.PipelineStats
+import com.nash.core.model.VideoRecorder
 import com.nash.engine.api.*
-import com.nash.engine.camera.CameraXCameraController
+import com.nash.engine.camera.CameraSessionController
 import com.nash.engine.impl.keepvisible.KeepVisibleController
 import kotlinx.coroutines.flow.*
 import javax.inject.Inject
@@ -19,7 +21,9 @@ import javax.inject.Singleton
 
 @Singleton
 class RealBlurGuardEngine @Inject constructor(
-    private val controller: CameraXCameraController,
+    private val cameraSession: CameraSessionController,
+    private val videoRecorder: VideoRecorder,
+    private val frameSource: @JvmSuppressWildcards FrameSource<ImageProxy>,
     private val pipeline: DefaultAnonymizationPipeline<ImageProxy>,
     private val modeHolder: AnonymizationModeHolder,
     private val keepVisibleController: KeepVisibleController
@@ -37,14 +41,14 @@ class RealBlurGuardEngine @Inject constructor(
         config.initialTrustedFaces.forEach { keepVisibleController.requestKeepVisible(it.trackId) }
 
         // Feed analysis frames into the detection/tracking pipeline.
-        controller.setFrameConsumer(pipeline)
+        frameSource.setFrameConsumer(pipeline)
         // Connect the feature's preview view, then bind the camera.
-        controller.attachPreviewView(previewTarget.view)
-        controller.bind(lifecycleOwner)
+        cameraSession.attachPreviewView(previewTarget.view)
+        cameraSession.bind(lifecycleOwner)
     }
 
     override fun startRecording(request: RecordingRequest): Flow<RecordingState> = flow {
-        val result = controller.startRecording(
+        val result = videoRecorder.startRecording(
             RecordingConfig(
                 includeAudio = request.includeAudio,
                 fileNamePrefix = request.outputFileName ?: "BlurGuard"
@@ -55,7 +59,7 @@ class RealBlurGuardEngine @Inject constructor(
                 emit(RecordingState.Error(result.message, result.cause))
             }
             is RecordingStartResult.Started -> {
-                emitAll(controller.recordingState.map { coreState ->
+                emitAll(videoRecorder.recordingState.map { coreState ->
                     when (coreState) {
                         is com.nash.core.model.RecordingState.Idle -> RecordingState.Idle
                         is com.nash.core.model.RecordingState.Starting -> RecordingState.Starting(request)
@@ -76,7 +80,7 @@ class RealBlurGuardEngine @Inject constructor(
     }
 
     override suspend fun stopRecording() {
-        controller.stopRecording()
+        videoRecorder.stopRecording()
     }
 
     override suspend fun updateAnonymizationMode(mode: AnonymizationMode) {
