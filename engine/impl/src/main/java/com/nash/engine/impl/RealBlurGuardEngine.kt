@@ -5,6 +5,7 @@ import androidx.lifecycle.LifecycleOwner
 import com.nash.core.model.AnonymizationModeEnum
 import com.nash.core.model.AnonymizationModeHolder
 import com.nash.core.model.FrameSource
+import com.nash.core.model.KeepVisibleState
 import com.nash.core.model.RecordingConfig
 import com.nash.core.model.RecordingStartResult
 import com.nash.core.model.TrackId
@@ -26,7 +27,10 @@ class RealBlurGuardEngine @Inject constructor(
     private val frameSource: @JvmSuppressWildcards FrameSource<ImageProxy>,
     private val pipeline: DefaultAnonymizationPipeline<ImageProxy>,
     private val modeHolder: AnonymizationModeHolder,
-    private val keepVisibleController: KeepVisibleController
+    private val keepVisibleController: KeepVisibleController,
+    // Injected directly instead of reached through the pipeline: recognition
+    // state is a peer singleton, not something the pipeline should re-export.
+    private val keepVisibleState: KeepVisibleState,
 ) : BlurGuardEngine {
 
     private val _warnings = MutableSharedFlow<EngineWarning>()
@@ -101,7 +105,7 @@ class RealBlurGuardEngine @Inject constructor(
         get() = pipeline.trackedBoxes
 
     override val keepVisible: StateFlow<Map<TrackId, TrackVerification>>
-        get() = pipeline.keepVisibleState.verifications
+        get() = keepVisibleState.verifications
 
     override val stats: StateFlow<PipelineStats>
         get() = pipeline.stats

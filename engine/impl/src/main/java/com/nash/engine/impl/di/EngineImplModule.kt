@@ -32,6 +32,13 @@ import dagger.hilt.components.SingletonComponent
 import javax.inject.Provider
 import javax.inject.Singleton
 import com.nash.engine.impl.keepvisible.KeepVisibleController
+import com.nash.engine.impl.pipeline.DetectionRunner
+import com.nash.engine.impl.pipeline.DetectionScheduler
+import com.nash.engine.impl.pipeline.KeepVisibleStage
+import com.nash.engine.impl.pipeline.PipelineStatsCollector
+import com.nash.engine.impl.pipeline.TrackedBoxPublisher
+import com.nash.engine.impl.pipeline.TrackingStage
+import com.nash.engine.impl.pipeline.VisibleRegionBoxMapper
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -51,6 +58,11 @@ object EngineImplModule {
     fun provideKeepVisibleController(
         orchestrator: KeepVisibleOrchestrator<ImageProxy>
     ): KeepVisibleController = orchestrator
+    /**
+     * Assembles the pipeline and its stages, pinning F = ImageProxy exactly
+     * once. Stages are internal to engine:impl, so they are built here rather
+     * than exposed as individual @Provides bindings.
+     */
     @Provides
     @Singleton
     fun provideAnonymizationPipeline(
@@ -67,11 +79,13 @@ object EngineImplModule {
             DetectorBackend.MEDIAPIPE -> listOf(mediaPipeFaceDetector)
         }
         return DefaultAnonymizationPipeline(
-            detectors,
-            tracker,
-            keepVisibleState,
-            keepVisibleOrchestrator,
-            renderBoxFeed
+            scheduler = DetectionScheduler(DetectionScheduler.DEFAULT_DETECTION_INTERVAL),
+            detectionRunner = DetectionRunner(detectors),
+            trackingStage = TrackingStage(tracker),
+            keepVisibleStage = KeepVisibleStage(keepVisibleOrchestrator, keepVisibleState),
+            boxMapper = VisibleRegionBoxMapper(),
+            publisher = TrackedBoxPublisher(renderBoxFeed),
+            statsCollector = PipelineStatsCollector(),
         )
     }
 
