@@ -18,7 +18,7 @@ internal class PipelineStatsCollector(
     private val _stats = MutableStateFlow(PipelineStats())
     val stats: StateFlow<PipelineStats> = _stats.asStateFlow()
 
-    private var windowStartNanos = 0L
+    private var windowStartNanos = NO_WINDOW
     private var windowFrameCount = 0
     private var windowDetectionCount = 0
     private var lastDetectionLatencyMillis = 0L
@@ -38,7 +38,7 @@ internal class PipelineStatsCollector(
 
     /** Called once per processed frame, detection or predict. */
     fun onFrameProcessed(frameStartNanos: Long) {
-        if (windowStartNanos == 0L) windowStartNanos = frameStartNanos
+        if (windowStartNanos == NO_WINDOW) windowStartNanos = frameStartNanos
         windowFrameCount++
 
         val windowNanos = clock() - windowStartNanos
@@ -56,13 +56,15 @@ internal class PipelineStatsCollector(
 
     override fun reset() {
         _stats.value = PipelineStats()
-        windowStartNanos = 0L
+        windowStartNanos = NO_WINDOW
         windowFrameCount = 0
         windowDetectionCount = 0
         lastDetectionLatencyMillis = 0L
     }
 
     private companion object {
+        /** Sentinel meaning "no window open". -1 because 0 is a valid timestamp. */
+        const val NO_WINDOW = -1L
         const val ONE_SECOND_NANOS = 1_000_000_000L
         const val ONE_SECOND_NANOS_F = 1_000_000_000f
     }

@@ -33,8 +33,13 @@ class PipelineStatsCollectorTest {
             collector.onFrameProcessed(start)
             clock.advance(oneSecond / 30)
         }
+        // Integer division truncates: 30 * (oneSecond / 30) = 999_999_990 ns,
+        // which is 10 ns short of the rollover threshold. Top up the remainder
+        // so the closing frame sees exactly one full second.
+        clock.advance(oneSecond % 30)
         // Close the window.
         collector.onFrameProcessed(clock())
+
 
         val stats = collector.stats.value
         assertEquals(31f, stats.frameFps, 0.5f)
