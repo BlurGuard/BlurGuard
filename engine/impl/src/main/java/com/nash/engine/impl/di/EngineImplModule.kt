@@ -2,36 +2,22 @@ package com.nash.engine.impl.di
 
 import androidx.camera.core.CameraEffect
 import androidx.camera.core.ImageProxy
-import com.nash.engine.render.AnonymizationCameraEffect
-import com.nash.engine.render.AnonymizingSurfaceProcessor
-import com.nash.engine.ml.MediaPipeFaceDetector
-import com.nash.engine.ml.YoloDetector
-import com.nash.engine.recognition.MobileFaceNetRecognizer
-import com.nash.engine.impl.keepvisible.KeepVisibleOrchestrator
-import com.nash.engine.impl.DefaultAnonymizationPipeline
+import com.nash.core.model.AnonymizationModeHolder
 import com.nash.core.model.Detector
 import com.nash.core.model.DetectorBackend
 import com.nash.core.model.DetectorConfig
 import com.nash.core.model.FaceRecognizer
 import com.nash.core.model.KeepVisibleState
+import com.nash.core.model.OcSortConfig
 import com.nash.core.model.RecognitionConfig
 import com.nash.core.model.RenderBoxFeed
-import com.nash.core.model.Tracker
-import com.nash.core.model.TrackerBackend
-import com.nash.core.model.TrustedPersonStore
 import com.nash.core.model.SessionTrustedPersonStore
-import com.nash.engine.tracking.ByteTrackTracker
-import com.nash.engine.tracking.ocsort.OcSortTracker
-import com.nash.core.model.AnonymizationModeHolder
-import com.nash.core.model.OcSortConfig
+import com.nash.core.model.Tracker
 import com.nash.core.model.TrackerConfig
-import dagger.Module
-import dagger.Provides
-import dagger.hilt.InstallIn
-import dagger.hilt.components.SingletonComponent
-import javax.inject.Provider
-import javax.inject.Singleton
+import com.nash.core.model.TrustedPersonStore
+import com.nash.engine.impl.DefaultAnonymizationPipeline
 import com.nash.engine.impl.keepvisible.KeepVisibleController
+import com.nash.engine.impl.keepvisible.KeepVisibleOrchestrator
 import com.nash.engine.impl.pipeline.DetectionRunner
 import com.nash.engine.impl.pipeline.DetectionScheduler
 import com.nash.engine.impl.pipeline.KeepVisibleStage
@@ -39,6 +25,19 @@ import com.nash.engine.impl.pipeline.PipelineStatsCollector
 import com.nash.engine.impl.pipeline.TrackedBoxPublisher
 import com.nash.engine.impl.pipeline.TrackingStage
 import com.nash.engine.impl.pipeline.VisibleRegionBoxMapper
+import com.nash.engine.ml.MediaPipeFaceDetector
+import com.nash.engine.ml.YoloDetector
+import com.nash.engine.recognition.MobileFaceNetRecognizer
+import com.nash.engine.render.AnonymizationCameraEffect
+import com.nash.engine.render.AnonymizingSurfaceProcessor
+import com.nash.engine.tracking.ByteTrackTracker
+import com.nash.engine.tracking.ocsort.OcSortTracker
+import dagger.Module
+import dagger.Provides
+import dagger.hilt.InstallIn
+import dagger.hilt.components.SingletonComponent
+import javax.inject.Provider
+import javax.inject.Singleton
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -53,16 +52,13 @@ object EngineImplModule {
         config: RecognitionConfig
     ): KeepVisibleOrchestrator<ImageProxy> =
         KeepVisibleOrchestrator(recognizer, store, state, config)
+
     @Provides
     @Singleton
     fun provideKeepVisibleController(
         orchestrator: KeepVisibleOrchestrator<ImageProxy>
     ): KeepVisibleController = orchestrator
-    /**
-     * Assembles the pipeline and its stages, pinning F = ImageProxy exactly
-     * once. Stages are internal to engine:impl, so they are built here rather
-     * than exposed as individual @Provides bindings.
-     */
+
     @Provides
     @Singleton
     fun provideAnonymizationPipeline(
@@ -78,14 +74,18 @@ object EngineImplModule {
             DetectorBackend.YOLO -> listOf(yoloDetector)
             DetectorBackend.MEDIAPIPE -> listOf(mediaPipeFaceDetector)
         }
+        // One shared clock for the pipeline AND the stats collector, so tests
+        // can drive both with a single fake clock.
+        val clock: () -> Long = System::nanoTime
         return DefaultAnonymizationPipeline(
-            scheduler = DetectionScheduler(DetectionScheduler.DEFAULT_DETECTION_INTERVAL),
+            scheduler = DetectionScheduler(),
             detectionRunner = DetectionRunner(detectors),
             trackingStage = TrackingStage(tracker),
             keepVisibleStage = KeepVisibleStage(keepVisibleOrchestrator, keepVisibleState),
             boxMapper = VisibleRegionBoxMapper(),
             publisher = TrackedBoxPublisher(renderBoxFeed),
-            statsCollector = PipelineStatsCollector(),
+            statsCollector = PipelineStatsCollector(clock = clock),
+            clock = clock,
         )
     }
 
@@ -134,15 +134,15 @@ object EngineImplModule {
             maxGallerySize = config.maxGallerySize,
             duplicateSimilarity = config.duplicateSimilarity
         )
-        
+
     @Provides
     @Singleton
     fun provideKeepVisibleState(): KeepVisibleState = KeepVisibleState()
-    
+
     @Provides
     @Singleton
     fun provideRecognitionConfig(): RecognitionConfig = RecognitionConfig()
-    
+
     @Provides
     @Singleton
     fun provideDetectorConfig(): DetectorConfig = DetectorConfig()

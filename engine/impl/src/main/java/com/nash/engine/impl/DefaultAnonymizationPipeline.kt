@@ -12,30 +12,26 @@ import com.nash.engine.impl.pipeline.PipelineStatsCollector
 import com.nash.engine.impl.pipeline.TrackedBoxPublisher
 import com.nash.engine.impl.pipeline.TrackingStage
 import com.nash.engine.impl.pipeline.VisibleRegionBoxMapper
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * Thin per-frame orchestrator. Owns sequencing only — every actual
- * responsibility lives in a [PipelineStage] under `pipeline/`:
+ * The per-frame orchestrator: schedule -> detect -> track -> keep-visible ->
+ * remap -> publish. Each responsibility lives in its own stage under
+ * [com.nash.engine.impl.pipeline]; this class only sequences them.
  *
- *  scheduler -> detectionRunner -> trackingStage -> keepVisibleStage
- *            -> boxMapper -> publisher, with statsCollector observing.
+ * Generic over the frame type F, so the whole pipeline is unit-testable on
+ * the JVM with fake frames (F = String in tests). No @Inject on purpose —
+ * EngineImplModule constructs it, pinning the concrete F exactly once.
  *
- * Generic over the frame type F so the whole class is unit-testable on the JVM
- * with fake frames (F = String in tests). No @Inject on purpose — the DI
- * module constructs it, pinning the concrete F exactly once.
- *
- * Concurrency contract: [onFrame] is called serially by the FrameSource on the
- * single-parallelism ml dispatcher, and the frame is only valid until onFrame
- * returns (the source closes it). Nothing here retains the frame.
+ * Concurrency contract: [onFrame] is called serially by the FrameSource on
+ * the single-parallelism ml dispatcher, and the frame is only valid until
+ * onFrame returns (the source closes it). Nothing here retains the frame.
  *
  * Backpressure: while this method suspends, the camera's KEEP_ONLY_LATEST
  * strategy drops stale frames — latest-wins by construction, never
  * queue-and-lag.
- *
- * The constructor is internal because the stages are internal to engine:impl.
- * The observable surface ([trackedBoxes], [stats], [onFrame], [reset]) stays
- * public.
  */
 class DefaultAnonymizationPipeline<F> internal constructor(
     private val scheduler: DetectionScheduler,
@@ -48,38 +44,52 @@ class DefaultAnonymizationPipeline<F> internal constructor(
     private val clock: () -> Long = System::nanoTime,
 ) : FrameConsumer<F> {
 
-    private val stages: List<PipelineStage> = listOf(
-        scheduler, trackingStage, keepVisibleStage, publisher, statsCollector,
-    )
-
-    /** Latest boxes, normalized to the visible region of the upright frame. */
+    /** Latest remapped tracked boxes. Conflated latest-wins state. */
     val trackedBoxes: StateFlow<List<TrackedBox>> get() = publisher.trackedBoxes
 
     /** Live pipeline performance counters (debug). */
     val stats: StateFlow<PipelineStats> get() = statsCollector.stats
 
+    private val _degraded = MutableStateFlow(false)
+
+    /**
+     * True while the LAST detection pass was incomplete (a detector threw),
+     * meaning objects in frame may be temporarily unprotected. Predict frames
+     * never touch this — it describes detection health and stays latched
+     * until the next detection pass reports clean.
+     */
+    val degraded: StateFlow<Boolean> = _degraded.asStateFlow()
+
+    private val stages: List<PipelineStage> = listOf(
+        scheduler,
+        trackingStage,
+        keepVisibleStage,
+        publisher,
+        statsCollector,
+    )
+
     override suspend fun onFrame(frame: F, metadata: FrameMetadata) {
         val startNanos = clock()
-        val detectionDue = scheduler.isDetectionDue(metadata)
 
-        val boxes = if (detectionDue) {
+        if (scheduler.isDetectionDue(metadata)) {
             val detections = detectionRunner.detect(frame, metadata)
+            _degraded.value = detections.degraded
             val tracked = trackingStage.update(detections.boxes, metadata)
-            keepVisibleStage.onDetectionFrame(frame, metadata, tracked)
+            val decorated = keepVisibleStage.onDetectionFrame(frame, metadata, tracked)
+            publisher.publish(boxMapper.remap(decorated, metadata), metadata.rotationDegrees)
+            statsCollector.recordDetectionLatency(clock() - startNanos)
         } else {
-            keepVisibleStage.decorate(trackingStage.predict(metadata))
+            val decorated = keepVisibleStage.decorate(trackingStage.predict(metadata))
+            publisher.publish(boxMapper.remap(decorated, metadata), metadata.rotationDegrees)
         }
 
-        // Single publish site for both paths: the privacy-critical hand-off
-        // exists exactly once, so it cannot drift between branches.
-        publisher.publish(boxMapper.remap(boxes, metadata), metadata.rotationDegrees)
-
-        if (detectionDue) statsCollector.recordDetectionLatency(clock() - startNanos)
         statsCollector.onFrameProcessed(startNanos)
     }
 
-    /** Clears all per-session state. Safe to call between camera sessions. */
     fun reset() {
         stages.forEach(PipelineStage::reset)
+        // Deliberately not folded into a stage: `degraded` belongs to the
+        // orchestrator, the only component that knows a detection pass ran.
+        _degraded.value = false
     }
 }

@@ -8,4 +8,10 @@ sealed class EngineWarning {
     data class HighLatency(val latencyMillis: Long) : EngineWarning()
     data class StorageLow(val remainingBytes: Long) : EngineWarning()
     object CameraTimedOut : EngineWarning()
+
+    /**
+     * At least one detector failed on the last detection pass; objects in
+     * frame may be temporarily unprotected.
+     */
+    data object DetectionDegraded : EngineWarning()
 }
