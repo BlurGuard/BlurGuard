@@ -11,28 +11,34 @@ import com.nash.core.model.TrackedBox
 import com.nash.engine.api.AnonymizationMode
 import com.nash.engine.api.BlurGuardEngine
 import com.nash.engine.api.PreviewTarget
-import com.nash.engine.api.RecordingRequest
-import com.nash.engine.api.RecordingState
-import com.nash.engine.api.TrustedFaceRef
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+/**
+ * Thin coordinator for the camera screen: combines collaborator flows into
+ * [CameraUiState] and routes events. All workflow logic lives in
+ * [CameraPermissionReducer], [RecordingController], [KeepVisibleUiController],
+ * and [DebugStatsTracker].
+ */
 @HiltViewModel
 class CameraViewModel @Inject constructor(
     private val engine: BlurGuardEngine,
-    private val dispatcherProvider: DispatcherProvider
+    dispatcherProvider: DispatcherProvider
 ) : ViewModel() {
 
-    private val seenIds = mutableSetOf<Long>()
-
-    private val _idStats = MutableStateFlow(CameraDebugStatsUiModel())
-    val idStats: StateFlow<CameraDebugStatsUiModel> = _idStats.asStateFlow()
+    private val recordingController =
+        RecordingController(engine, viewModelScope, dispatcherProvider)
+    private val keepVisibleController =
+        KeepVisibleUiController(engine, viewModelScope, dispatcherProvider)
+    private val debugStatsTracker = DebugStatsTracker()
 
     private val _uiState = MutableStateFlow(CameraUiState())
     val uiState: StateFlow<CameraUiState> = _uiState.asStateFlow()
@@ -43,41 +49,46 @@ class CameraViewModel @Inject constructor(
     /** Keep-visible verification state, exposed by the engine API. */
     val keepVisible: StateFlow<Map<TrackId, TrackVerification>> = engine.keepVisible
 
-    private var enrollTarget: TrackId? = null
-    private var enrollSeenPending = false
+    val idStats: StateFlow<CameraDebugStatsUiModel> =
+        engine.trackedBoxes
+            .map(debugStatsTracker::onTrackedBoxes)
+            .stateIn(viewModelScope, SharingStarted.Eagerly, CameraDebugStatsUiModel())
 
     init {
+        observeWarnings()
+        observeRecording()
+        observeKeepVisibleMessages()
+    }
+
+    private fun observeWarnings() {
         viewModelScope.launch {
             engine.observeWarnings().collect { warning ->
-                // Handle warnings in UI
                 _uiState.update { it.copy(errorMessage = warning.toString()) }
             }
         }
+    }
 
+    private fun observeRecording() {
         viewModelScope.launch {
-            trackedBoxes.collect { boxes ->
-                boxes.forEach { seenIds += it.id.value }
-                _idStats.value = CameraDebugStatsUiModel(active = boxes.size, totalSeen = seenIds.size)            }
+            recordingController.state.collect { recording ->
+                _uiState.update {
+                    it.copy(
+                        recordingState = recording.recordingState,
+                        durationSeconds = recording.durationSeconds,
+                        lastSavedUri = recording.lastSavedUri ?: it.lastSavedUri,
+                        errorMessage = recording.errorMessage ?: it.errorMessage
+                    )
+                }
+            }
         }
     }
 
-    fun onFaceTapped(trackId: TrackId) {
-        enrollTarget = trackId
-        enrollSeenPending = false
+    private fun observeKeepVisibleMessages() {
         viewModelScope.launch {
-            engine.updateTrustedFaces(listOf(TrustedFaceRef(trackId)))
+            keepVisibleController.message.collect { messageRes ->
+                _uiState.update { it.copy(keepVisibleMessage = messageRes) }
+            }
         }
-    }
-
-    fun onRevokeAllKeepVisible() {
-        enrollTarget = null
-        viewModelScope.launch {
-            engine.updateTrustedFaces(emptyList())
-        }
-    }
-
-    fun onKeepVisibleMessageShown() {
-        _uiState.update { it.copy(keepVisibleMessage = null) }
     }
 
     fun bindEngine(lifecycleOwner: LifecycleOwner, previewTarget: PreviewTarget) {
@@ -86,77 +97,40 @@ class CameraViewModel @Inject constructor(
 
     fun onEvent(event: CameraEvent) {
         when (event) {
-            CameraEvent.OnCameraPermissionGranted -> {
-                _uiState.update { it.copy(cameraPermissionGranted = true, showCameraPermissionRationale = false) }
-            }
-            CameraEvent.OnCameraPermissionDenied -> {
-                _uiState.update {
-                    it.copy(
-                        cameraPermissionGranted = false,
-                        showCameraPermissionRationale = true,
-                        errorMessage = "Camera permission is required to record video."
-                    )
-                }
-            }
-            CameraEvent.OnAudioPermissionGranted -> {
-                _uiState.update { it.copy(audioPermissionGranted = true, showAudioPermissionRationale = false) }
-            }
-            CameraEvent.OnAudioPermissionDenied -> {
-                _uiState.update {
-                    it.copy(
-                        audioPermissionGranted = false,
-                        showAudioPermissionRationale = true
-                    )
-                }
-            }
-            CameraEvent.OnRecordClicked -> startRecording()
-            CameraEvent.OnStopRecordingClicked -> stopRecording()
-            is CameraEvent.OnCameraError -> {
+            CameraEvent.OnCameraPermissionGranted,
+            CameraEvent.OnCameraPermissionDenied,
+            CameraEvent.OnAudioPermissionGranted,
+            CameraEvent.OnAudioPermissionDenied ->
+                _uiState.update { CameraPermissionReducer.reduce(it, event) }
+
+            CameraEvent.OnRecordClicked ->
+                recordingController.startRecording(
+                    includeAudio = _uiState.value.audioPermissionGranted
+                )
+
+            CameraEvent.OnStopRecordingClicked -> recordingController.stopRecording()
+
+            is CameraEvent.OnCameraError ->
                 _uiState.update { it.copy(errorMessage = event.message) }
-            }
+
             CameraEvent.OnErrorDismissed -> {
+                recordingController.consumeError()
                 _uiState.update { it.copy(errorMessage = null) }
             }
         }
     }
 
-    private var recordingJob: Job? = null
+    fun onFaceTapped(trackId: TrackId) = keepVisibleController.onFaceTapped(trackId)
 
-    private fun startRecording() {
-        recordingJob?.cancel()
-        recordingJob = viewModelScope.launch {
-            val request = RecordingRequest(includeAudio = _uiState.value.audioPermissionGranted)
-            engine.startRecording(request).collect { state ->
-                updateRecordingState(state)
-            }
-        }
-    }
+    fun onRevokeAllKeepVisible() = keepVisibleController.onRevokeAll()
 
-    private fun updateRecordingState(state: RecordingState) {
-        _uiState.update { it.copy(recordingState = state) }
-        when (state) {
-            is RecordingState.Recording -> {
-                _uiState.update { it.copy(durationSeconds = (state.durationMillis / 1000).toInt()) }
-            }
-            is RecordingState.Saved -> {
-                _uiState.update { it.copy(lastSavedUri = state.uri.toString()) }
-            }
-            is RecordingState.Error -> {
-                _uiState.update { it.copy(errorMessage = state.message) }
-            }
-            else -> {}
-        }
-    }
-
-    private fun stopRecording() {
-        viewModelScope.launch {
-            engine.stopRecording()
-        }
+    fun onKeepVisibleMessageShown() {
+        keepVisibleController.onMessageShown()
+        _uiState.update { it.copy(keepVisibleMessage = null) }
     }
 
     fun onModeClicked() {
-        val currentMode = _uiState.value.anonymizationMode
-        val nextMode = when (currentMode) {
+        val nextMode = when (_uiState.value.anonymizationMode) {
             AnonymizationMode.BLUR -> AnonymizationMode.PIXELATE
             AnonymizationMode.PIXELATE -> AnonymizationMode.BLACK_BOX
             AnonymizationMode.BLACK_BOX -> AnonymizationMode.BOUNDING

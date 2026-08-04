@@ -35,6 +35,7 @@ import com.nash.feature.camera.components.KeepVisibleControls
 import com.nash.feature.camera.components.ModeChip
 import com.nash.feature.camera.components.PipelineDebugHud
 import com.nash.feature.camera.components.TrackingOverlay
+import androidx.compose.ui.platform.LocalContext
 
 /**
  * Camera recording screen.
@@ -51,11 +52,18 @@ fun CameraScreen(
     showDebugOverlays: Boolean = BuildConfig.DEBUG
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
-
+    val context = LocalContext.current
     LaunchedEffect(state.uiState.errorMessage) {
         state.uiState.errorMessage?.let { message ->
             snackbarHostState.showSnackbar(message)
             actions.onDismissError()
+        }
+    }
+
+    LaunchedEffect(state.uiState.keepVisibleMessage) {
+        state.uiState.keepVisibleMessage?.let { messageRes ->
+            snackbarHostState.showSnackbar(context.getString(messageRes))
+            actions.onKeepVisibleMessageShown()
         }
     }
 

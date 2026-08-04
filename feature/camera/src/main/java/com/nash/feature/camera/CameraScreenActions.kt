@@ -10,5 +10,6 @@ data class CameraScreenActions(
     val onDismissError: () -> Unit,
     val onModeClick: () -> Unit,
     val onFaceTapped: (TrackId) -> Unit,
-    val onRevokeAllKeepVisible: () -> Unit
+    val onRevokeAllKeepVisible: () -> Unit,
+    val onKeepVisibleMessageShown: () -> Unit
 )

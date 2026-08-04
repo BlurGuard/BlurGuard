@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="keep_visible_revoke_all">Re-blur all</string>
+    <string name="keep_visible_trusted">Face verified — kept visible</string>
+    <string name="keep_visible_rejected">Face not recognized — re-blurred</string>
 </resources>

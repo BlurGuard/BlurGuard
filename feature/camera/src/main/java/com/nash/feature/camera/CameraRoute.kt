@@ -91,7 +91,8 @@ fun CameraRoute(
             onDismissError = { viewModel.onEvent(CameraEvent.OnErrorDismissed) },
             onModeClick = { viewModel.onModeClicked() },
             onFaceTapped = { viewModel.onFaceTapped(it) },
-            onRevokeAllKeepVisible = { viewModel.onRevokeAllKeepVisible() }
+            onRevokeAllKeepVisible = { viewModel.onRevokeAllKeepVisible() },
+            onKeepVisibleMessageShown = { viewModel.onKeepVisibleMessageShown() }
         )
     }
 
