@@ -22,6 +22,10 @@ import kotlinx.coroutines.launch
  * Frame ownership stays here — the [ImageProxy] is always closed in a
  * `finally` block after the consumer returns, which is also what drives
  * CameraX's latest-wins backpressure (STRATEGY_KEEP_ONLY_LATEST).
+ *
+ * Frame IDs are monotonically increasing across rebinds by design: the
+ * downstream pipeline is a singleton that survives camera rebinds, so
+ * never-repeating IDs avoid any ambiguity with stale in-flight frames.
  */
 @Singleton
 class AnalysisFrameSource @Inject constructor(
@@ -42,6 +46,9 @@ class AnalysisFrameSource @Inject constructor(
     @Volatile
     private var frameConsumer: FrameConsumer<ImageProxy>? = null
 
+    @Volatile
+    private var isShutdown = false
+
     override fun setFrameConsumer(consumer: FrameConsumer<ImageProxy>?) {
         frameConsumer = consumer
     }
@@ -55,6 +62,10 @@ class AnalysisFrameSource @Inject constructor(
      */
     fun attachTo(imageAnalysis: ImageAnalysis) {
         imageAnalysis.setAnalyzer(Runnable::run) { imageProxy ->
+            if (isShutdown) {
+                imageProxy.close()
+                return@setAnalyzer
+            }
             val consumer = frameConsumer
             if (consumer == null) {
                 imageProxy.close()
@@ -92,7 +103,9 @@ class AnalysisFrameSource @Inject constructor(
         )
     }
 
+    /** Permanently stops frame delivery. Any late-arriving frame is closed immediately. */
     fun shutdown() {
+        isShutdown = true
         analysisScope.cancel()
     }
 }

@@ -23,5 +23,7 @@ class CameraPreviewViewFactory @Inject constructor() {
 
     fun requirePreviewView(view: View): PreviewView =
         view as? PreviewView
-            ?: error("PreviewTarget.view must be a CameraX PreviewView")
+            ?: error(
+                "PreviewTarget.view must be a CameraX PreviewView; got ${view::class.java.name}"
+            )
 }

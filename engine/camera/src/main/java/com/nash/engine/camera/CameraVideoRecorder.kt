@@ -51,10 +51,39 @@ class CameraVideoRecorder @Inject constructor(
     private val _recordingState = MutableStateFlow<RecordingState>(RecordingState.Idle)
     override val recordingState: Flow<RecordingState> = _recordingState.asStateFlow()
 
-    /** Called by [CameraXFacade] once the CameraX [Recorder] is created during bind. */
+    /** Called by [CameraXSessionFacade] once the CameraX [Recorder] is created during bind. */
     fun attach(recorder: Recorder, callbackExecutor: Executor) {
         this.recorder = recorder
         this.callbackExecutor = callbackExecutor
+    }
+
+    /**
+     * Clears the session-scoped recorder/executor references. Called by the
+     * facade on unbind/shutdown; [attach] is called again on the next bind.
+     * Recording attempts while detached fail with "Camera not initialized".
+     */
+    fun detach() {
+        recorder = null
+        callbackExecutor = null
+    }
+
+    /**
+     * Best-effort stop used during unbind/shutdown.
+     *
+     * [finalizeResult] is intentionally NOT cleared here: the Finalize event
+     * still fires for a quietly-stopped recording and completes it, so a
+     * concurrent [stopRecording] caller gets a real result instead of hanging
+     * or mis-reporting.
+     */
+    fun cancelActiveRecordingQuietly() {
+        try {
+            activeRecording?.stop()
+            activeRecording?.close()
+        } catch (_: Exception) {
+            // Best-effort cleanup; the finalize event reports any real error.
+        } finally {
+            activeRecording = null
+        }
     }
 
     /** Surfaces a camera bind failure through the recording state stream. */
@@ -65,15 +94,7 @@ class CameraVideoRecorder @Inject constructor(
         )
     }
 
-    /** Best-effort stop used during unbind; the finalize event reports any real error. */
-    fun cancelActiveRecordingQuietly() {
-        try {
-            activeRecording?.stop()
-            activeRecording?.close()
-        } catch (_: Exception) {
-            // Best-effort cleanup.
-        }
-    }
+
 
     @SuppressLint("MissingPermission")
     override suspend fun startRecording(config: RecordingConfig): RecordingStartResult {

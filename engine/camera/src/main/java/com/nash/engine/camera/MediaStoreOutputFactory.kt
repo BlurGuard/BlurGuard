@@ -16,7 +16,7 @@ import javax.inject.Singleton
 /**
  * Builds MediaStore output options and safe filenames for anonymized
  * recordings. Pure output-destination policy: no recording state, no
- * camera knowledge.
+ * camera logic.
  */
 @Singleton
 class MediaStoreOutputFactory @Inject constructor(
@@ -44,11 +44,18 @@ class MediaStoreOutputFactory @Inject constructor(
         const val MIME_TYPE = "video/mp4"
         const val OUTPUT_DIRECTORY = "BlurGuard"
         const val FILENAME_TIMESTAMP = "yyyy-MM-dd_HH-mm"
+        const val DEFAULT_PREFIX = "BlurGuard"
 
+        private val UNSAFE_CHARS = Regex("[^A-Za-z0-9_-]")
+
+        /** Prefix may come from user settings; strip anything filesystem-unsafe. */
+        internal fun sanitizePrefix(prefix: String): String =
+            prefix.trim().replace(UNSAFE_CHARS, "_").ifBlank { DEFAULT_PREFIX }
+
+        /** Locale.US keeps the numeric timestamp stable across device locales. */
         internal fun generateFilename(prefix: String, now: Date = Date()): String {
-            val timestamp =
-                SimpleDateFormat(FILENAME_TIMESTAMP, Locale.getDefault()).format(now)
-            return "${prefix}_$timestamp.mp4"
+            val timestamp = SimpleDateFormat(FILENAME_TIMESTAMP, Locale.US).format(now)
+            return "${sanitizePrefix(prefix)}_$timestamp.mp4"
         }
     }
 }

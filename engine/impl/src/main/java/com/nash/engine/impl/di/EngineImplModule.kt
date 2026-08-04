@@ -4,7 +4,6 @@ import androidx.camera.core.CameraEffect
 import androidx.camera.core.ImageProxy
 import com.nash.engine.render.AnonymizationCameraEffect
 import com.nash.engine.render.AnonymizingSurfaceProcessor
-import com.nash.engine.camera.CameraXFacade
 import com.nash.engine.ml.MediaPipeFaceDetector
 import com.nash.engine.ml.YoloDetector
 import com.nash.engine.recognition.MobileFaceNetRecognizer
@@ -14,7 +13,6 @@ import com.nash.core.model.Detector
 import com.nash.core.model.DetectorBackend
 import com.nash.core.model.DetectorConfig
 import com.nash.core.model.FaceRecognizer
-import com.nash.core.model.FrameSource
 import com.nash.core.model.KeepVisibleState
 import com.nash.core.model.RecognitionConfig
 import com.nash.core.model.RenderBoxFeed
