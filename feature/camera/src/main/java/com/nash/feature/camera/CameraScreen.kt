@@ -1,6 +1,5 @@
 package com.nash.feature.camera
 
-import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -14,7 +13,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -28,50 +26,36 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import com.nash.engine.api.AnonymizationMode
 import com.nash.engine.api.PreviewTarget
 import com.nash.engine.api.RecordingState
-import com.nash.core.model.PipelineStats
-import com.nash.core.model.TrackId
-import com.nash.core.model.TrackVerification
-import com.nash.core.model.TrackedBox
-import com.nash.core.model.VerificationState
+import com.nash.feature.camera.components.KeepVisibleControls
+import com.nash.feature.camera.components.ModeChip
+import com.nash.feature.camera.components.PipelineDebugHud
 import com.nash.feature.camera.components.TrackingOverlay
 
 /**
  * Camera recording screen.
  *
- * Displays the camera preview, record/stop controls, status information, and
- * the debug tracking overlay.
+ * Pure layout coordinator: all state comes in via [CameraScreenState], all
+ * events go out via [CameraScreenActions]. Debug-only surfaces (tracking
+ * overlay + pipeline HUD) are gated by [showDebugOverlays].
  */
 @Composable
 fun CameraScreen(
-    uiState: CameraUiState,
+    state: CameraScreenState,
     previewTarget: PreviewTarget,
-    trackedBoxes: List<TrackedBox>,
-    onRecordClick: () -> Unit,
-    onStopClick: () -> Unit,
-    onRequestPermissions: () -> Unit,
-    onDismissError: () -> Unit,
-    stats: PipelineStats,
-    mode: AnonymizationMode,
-    onModeClick: () -> Unit,
-    idStats: CameraDebugStatsUiModel,
-    keepVisible: Map<TrackId, TrackVerification>,
-    onFaceTapped: (TrackId) -> Unit,
-    onRevokeAllKeepVisible: () -> Unit
-    ) {
-    val context = LocalContext.current
+    actions: CameraScreenActions,
+    showDebugOverlays: Boolean = BuildConfig.DEBUG
+) {
     val snackbarHostState = remember { SnackbarHostState() }
 
-    LaunchedEffect(uiState.errorMessage) {
-        uiState.errorMessage?.let { message ->
+    LaunchedEffect(state.uiState.errorMessage) {
+        state.uiState.errorMessage?.let { message ->
             snackbarHostState.showSnackbar(message)
-            onDismissError()
+            actions.onDismissError()
         }
     }
 
@@ -79,14 +63,13 @@ fun CameraScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { paddingValues ->
         Box(
-
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            if (!uiState.cameraPermissionGranted) {
+            if (!state.uiState.cameraPermissionGranted) {
                 PermissionRationale(
-                    onRequestPermissions = onRequestPermissions,
+                    onRequestPermissions = actions.onRequestPermissions,
                     modifier = Modifier.align(Alignment.Center)
                 )
             } else {
@@ -95,61 +78,48 @@ fun CameraScreen(
                     modifier = Modifier.fillMaxSize()
                 )
 
-                // Debug overlay: must sit directly on top of the preview and
-                // share its exact bounds so normalized coords line up.
-                TrackingOverlay(
-                    trackedBoxes = trackedBoxes,
-                    modifier = Modifier.fillMaxSize(),
-                    verifications = keepVisible,
-                    onFaceTapped = onFaceTapped,
-                )
-                val anyKeptVisible = keepVisible.values.any {
-                    it.state == VerificationState.TRUSTED || it.state == VerificationState.PENDING
-                }
-                if (anyKeptVisible) {
-                    AssistChip(
-                        onClick = onRevokeAllKeepVisible,
-                        label = { Text("Re-blur all") },
+                if (showDebugOverlays) {
+                    // Debug overlay: must sit directly on top of the preview and
+                    // share its exact bounds so normalized coords line up.
+                    TrackingOverlay(
+                        trackedBoxes = state.trackedBoxes,
+                        modifier = Modifier.fillMaxSize(),
+                        verifications = state.keepVisible,
+                        onFaceTapped = actions.onFaceTapped,
+                    )
+                    PipelineDebugHud(
+                        stats = state.stats,
+                        debugStats = state.debugStats,
                         modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .padding(top = 16.dp)
+                            .align(Alignment.TopStart)
+                            .statusBarsPadding()
+                            .padding(8.dp)
                     )
                 }
+                KeepVisibleControls(
+                    keepVisible = state.keepVisible,
+                    onRevokeAll = actions.onRevokeAllKeepVisible,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 16.dp)
+                )
                 RecordingOverlay(
-                    uiState = uiState,
+                    uiState = state.uiState,
                     modifier = Modifier.align(Alignment.TopCenter)
                 )
-                Text("ids: ${idStats.active} active / ${idStats.totalSeen} seen")
-                Text(
-                    text = "%.0f fps · det %.1f/s · %d ms".format(
-                        stats.frameFps, stats.fps, stats.detectionLatencyMillis
-                    ),
-                    color = Color.Green,
-                    style = MaterialTheme.typography.labelMedium,
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .statusBarsPadding()
-                        .padding(8.dp)
-                        .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(4.dp))
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                )
-                Text(
-                    text = mode.name,
-                    color = Color.White,
-                    style = MaterialTheme.typography.labelMedium,
+                ModeChip(
+                    mode = state.mode,
+                    onClick = actions.onModeClick,
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .statusBarsPadding()
                         .padding(8.dp)
-                        .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(4.dp))
-                        .clickable { onModeClick() }
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
                 )
                 Controls(
-                    isRecording = uiState.isRecording,
-                    isBusy = uiState.isStartingOrStopping,
-                    onRecordClick = onRecordClick,
-                    onStopClick = onStopClick,
+                    isRecording = state.uiState.isRecording,
+                    isBusy = state.uiState.isStartingOrStopping,
+                    onRecordClick = actions.onRecordClick,
+                    onStopClick = actions.onStopClick,
                     modifier = Modifier.align(Alignment.BottomCenter)
                 )
             }
