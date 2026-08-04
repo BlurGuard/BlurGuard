@@ -78,7 +78,7 @@ class CameraUseCaseFactory @Inject constructor() {
             .addUseCase(preview)
             .addUseCase(videoCapture)
             .addUseCase(imageAnalysis)
-            .addEffect(anonymizationEffect) // preview + recording anonymized
+            .addEffect(anonymizationEffect)// Privacy invariant: the same anonymization effect is applied to preview and video capture.
             .build()
     }
 
