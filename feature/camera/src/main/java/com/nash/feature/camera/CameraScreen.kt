@@ -60,7 +60,7 @@ fun CameraScreen(
     stats: PipelineStats,
     mode: AnonymizationMode,
     onModeClick: () -> Unit,
-    idStats: CameraViewModel.IdStats,
+    idStats: CameraDebugStatsUiModel,
     keepVisible: Map<TrackId, TrackVerification>,
     onFaceTapped: (TrackId) -> Unit,
     onRevokeAllKeepVisible: () -> Unit

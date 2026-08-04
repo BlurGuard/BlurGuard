@@ -30,10 +30,9 @@ class CameraViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val seenIds = mutableSetOf<Long>()
-    private val _idStats = MutableStateFlow(IdStats())
-    val idStats: StateFlow<IdStats> = _idStats.asStateFlow()
 
-    data class IdStats(val active: Int = 0, val totalSeen: Int = 0)
+    private val _idStats = MutableStateFlow(CameraDebugStatsUiModel())
+    val idStats: StateFlow<CameraDebugStatsUiModel> = _idStats.asStateFlow()
 
     private val _uiState = MutableStateFlow(CameraUiState())
     val uiState: StateFlow<CameraUiState> = _uiState.asStateFlow()
@@ -58,8 +57,7 @@ class CameraViewModel @Inject constructor(
         viewModelScope.launch {
             trackedBoxes.collect { boxes ->
                 boxes.forEach { seenIds += it.id.value }
-                _idStats.value = IdStats(active = boxes.size, totalSeen = seenIds.size)
-            }
+                _idStats.value = CameraDebugStatsUiModel(active = boxes.size, totalSeen = seenIds.size)            }
         }
     }
 
