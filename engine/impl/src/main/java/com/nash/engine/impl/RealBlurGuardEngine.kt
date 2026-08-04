@@ -5,12 +5,13 @@ import androidx.lifecycle.LifecycleOwner
 import com.nash.core.model.AnonymizationModeEnum
 import com.nash.core.model.AnonymizationModeHolder
 import com.nash.core.model.FrameSource
+import com.nash.core.model.KeepVisibleState
+import com.nash.core.model.PipelineStats
 import com.nash.core.model.RecordingConfig
 import com.nash.core.model.RecordingStartResult
 import com.nash.core.model.TrackId
 import com.nash.core.model.TrackVerification
 import com.nash.core.model.TrackedBox
-import com.nash.core.model.PipelineStats
 import com.nash.core.model.VideoRecorder
 import com.nash.engine.api.*
 import com.nash.engine.camera.CameraSessionController
@@ -25,10 +26,16 @@ class RealBlurGuardEngine @Inject constructor(
     private val videoRecorder: VideoRecorder,
     private val frameSource: @JvmSuppressWildcards FrameSource<ImageProxy>,
     private val pipeline: DefaultAnonymizationPipeline<ImageProxy>,
+    private val keepVisibleState: KeepVisibleState,
     private val modeHolder: AnonymizationModeHolder,
     private val keepVisibleController: KeepVisibleController
 ) : BlurGuardEngine {
 
+    /**
+     * Direct emit channel for warnings that don't originate from a pipeline
+     * flow (e.g. storage, camera timeouts). Merged into [observeWarnings];
+     * future emit sites land here.
+     */
     private val _warnings = MutableSharedFlow<EngineWarning>()
 
     override fun bind(
@@ -40,6 +47,9 @@ class RealBlurGuardEngine @Inject constructor(
         modeHolder.set(config.initialMode.toCore())
         config.initialTrustedFaces.forEach { keepVisibleController.requestKeepVisible(it.trackId) }
 
+        // Every session starts from clean tracking/stats/keep-visible state.
+        // (This reset was previously owned by the deleted DefaultAnonymizationEngine.)
+        pipeline.reset()
         // Feed analysis frames into the detection/tracking pipeline.
         frameSource.setFrameConsumer(pipeline)
         // Connect the feature's preview view, then bind the camera.
@@ -95,13 +105,18 @@ class RealBlurGuardEngine @Inject constructor(
         }
     }
 
-    override fun observeWarnings(): Flow<EngineWarning> = _warnings.asSharedFlow()
+    override fun observeWarnings(): Flow<EngineWarning> = merge(
+        _warnings.asSharedFlow(),
+        pipeline.degraded
+            .filter { it }
+            .map { EngineWarning.DetectionDegraded },
+    )
 
     override val trackedBoxes: StateFlow<List<TrackedBox>>
         get() = pipeline.trackedBoxes
 
     override val keepVisible: StateFlow<Map<TrackId, TrackVerification>>
-        get() = pipeline.keepVisibleState.verifications
+        get() = keepVisibleState.verifications
 
     override val stats: StateFlow<PipelineStats>
         get() = pipeline.stats

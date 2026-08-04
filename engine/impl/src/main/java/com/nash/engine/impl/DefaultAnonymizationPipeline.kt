@@ -1,136 +1,95 @@
 package com.nash.engine.impl
 
-import com.nash.engine.impl.keepvisible.KeepVisibleOrchestrator
-import com.nash.core.model.BoundingBox
-import com.nash.core.model.Detector
 import com.nash.core.model.FrameConsumer
 import com.nash.core.model.FrameMetadata
-import com.nash.core.model.KeepVisibleState
 import com.nash.core.model.PipelineStats
-import com.nash.core.model.RenderBoxFeed
 import com.nash.core.model.TrackedBox
-import com.nash.core.model.Tracker
+import com.nash.engine.impl.pipeline.DetectionRunner
+import com.nash.engine.impl.pipeline.DetectionScheduler
+import com.nash.engine.impl.pipeline.KeepVisibleStage
+import com.nash.engine.impl.pipeline.PipelineStage
+import com.nash.engine.impl.pipeline.PipelineStatsCollector
+import com.nash.engine.impl.pipeline.TrackedBoxPublisher
+import com.nash.engine.impl.pipeline.TrackingStage
+import com.nash.engine.impl.pipeline.VisibleRegionBoxMapper
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * The per-frame orchestrator: detectors -> tracker -> published tracked boxes.
+ * The per-frame orchestrator: schedule -> detect -> track -> keep-visible ->
+ * remap -> publish. Each responsibility lives in its own stage under
+ * [com.nash.engine.impl.pipeline]; this class only sequences them.
  *
- * Generic over the frame type F, so this whole class is unit-testable on the
- * JVM with fake frames (F = String in tests). No @Inject on purpose — the app
- * DI module constructs it, pinning the concrete F exactly once.
+ * Generic over the frame type F, so the whole pipeline is unit-testable on
+ * the JVM with fake frames (F = String in tests). No @Inject on purpose —
+ * EngineImplModule constructs it, pinning the concrete F exactly once.
  *
- * Concurrency contract: [onFrame] is called serially by the FrameSource on the
- * single-parallelism ml dispatcher, and the frame is only valid until onFrame
- * returns (the source closes it). Nothing here retains the frame.
+ * Concurrency contract: [onFrame] is called serially by the FrameSource on
+ * the single-parallelism ml dispatcher, and the frame is only valid until
+ * onFrame returns (the source closes it). Nothing here retains the frame.
  *
  * Backpressure: while this method suspends, the camera's KEEP_ONLY_LATEST
- * strategy drops stale frames — latest-wins by construction, never queue-and-lag.
+ * strategy drops stale frames — latest-wins by construction, never
+ * queue-and-lag.
  */
-class DefaultAnonymizationPipeline<F>(
-    private val detectors: List<Detector<F>>,
-    private val tracker: Tracker,
-    val keepVisibleState: KeepVisibleState,
-    private val keepVisible: KeepVisibleOrchestrator<F>,
-    private val renderBoxFeed: RenderBoxFeed,
-    private val detectionInterval: Long = 2L
+class DefaultAnonymizationPipeline<F> internal constructor(
+    private val scheduler: DetectionScheduler,
+    private val detectionRunner: DetectionRunner<F>,
+    private val trackingStage: TrackingStage,
+    private val keepVisibleStage: KeepVisibleStage<F>,
+    private val boxMapper: VisibleRegionBoxMapper,
+    private val publisher: TrackedBoxPublisher,
+    private val statsCollector: PipelineStatsCollector,
+    private val clock: () -> Long = System::nanoTime,
 ) : FrameConsumer<F> {
 
-    private var lastDetectionFrameId = -1L
-    private val _trackedBoxes = MutableStateFlow<List<TrackedBox>>(emptyList())
-    val trackedBoxes: StateFlow<List<TrackedBox>> = _trackedBoxes.asStateFlow()
+    /** Latest remapped tracked boxes. Conflated latest-wins state. */
+    val trackedBoxes: StateFlow<List<TrackedBox>> get() = publisher.trackedBoxes
 
+    /** Live pipeline performance counters (debug). */
+    val stats: StateFlow<PipelineStats> get() = statsCollector.stats
 
-    private val _stats = MutableStateFlow(PipelineStats())
-    val stats: StateFlow<PipelineStats> = _stats.asStateFlow()
+    private val _degraded = MutableStateFlow(false)
 
-    private var windowStartNanos = 0L
-    private var windowFrameCount = 0
-    private var windowDetectionCount = 0
-    private var lastDetectionLatencyMillis = 0L
+    /**
+     * True while the LAST detection pass was incomplete (a detector threw),
+     * meaning objects in frame may be temporarily unprotected. Predict frames
+     * never touch this — it describes detection health and stays latched
+     * until the next detection pass reports clean.
+     */
+    val degraded: StateFlow<Boolean> = _degraded.asStateFlow()
+
+    private val stages: List<PipelineStage> = listOf(
+        scheduler,
+        trackingStage,
+        keepVisibleStage,
+        publisher,
+        statsCollector,
+    )
+
     override suspend fun onFrame(frame: F, metadata: FrameMetadata) {
-        val startNanos = System.nanoTime()
-        val detectionDue = lastDetectionFrameId < 0 ||
-                metadata.frameId - lastDetectionFrameId >= detectionInterval
+        val startNanos = clock()
 
-        if (detectionDue) {
-            lastDetectionFrameId = metadata.frameId
-            val detections = detectors.flatMap { detector ->
-                try {
-                    detector.detect(frame, metadata)
-                } catch (e: Exception) {
-                    emptyList()
-                }
-            }
-            val boxes = tracker.update(detections,metadata)
-            keepVisible.onDetectionFrame(frame, metadata, boxes)
-            val visibleBoxes = keepVisibleState.decorate(boxes).remappedToVisibleRegion(metadata)
-            _trackedBoxes.value = visibleBoxes
-            renderBoxFeed.publish(visibleBoxes, metadata.rotationDegrees)
-            lastDetectionLatencyMillis = (System.nanoTime() - startNanos) / 1_000_000
-            windowDetectionCount++
+        if (scheduler.isDetectionDue(metadata)) {
+            val detections = detectionRunner.detect(frame, metadata)
+            _degraded.value = detections.degraded
+            val tracked = trackingStage.update(detections.boxes, metadata)
+            val decorated = keepVisibleStage.onDetectionFrame(frame, metadata, tracked)
+            publisher.publish(boxMapper.remap(decorated, metadata), metadata.rotationDegrees)
+            statsCollector.recordDetectionLatency(clock() - startNanos)
         } else {
-            val boxes = keepVisibleState.decorate(tracker.predict(metadata))
-            val visibleBoxes = boxes.remappedToVisibleRegion(metadata)
-            _trackedBoxes.value = visibleBoxes
-            renderBoxFeed.publish(visibleBoxes, metadata.rotationDegrees)
+            val decorated = keepVisibleStage.decorate(trackingStage.predict(metadata))
+            publisher.publish(boxMapper.remap(decorated, metadata), metadata.rotationDegrees)
         }
 
-        // --- Perf counters: 1-second window over ALL processed frames.
-        if (windowStartNanos == 0L) windowStartNanos = startNanos
-        windowFrameCount++
-        val windowNanos = System.nanoTime() - windowStartNanos
-        if (windowNanos >= 1_000_000_000L) {
-            _stats.value = PipelineStats(
-                frameFps = windowFrameCount * 1_000_000_000f / windowNanos,
-                fps = windowDetectionCount * 1_000_000_000f / windowNanos,
-                detectionLatencyMillis = lastDetectionLatencyMillis
-            )
-            windowStartNanos = System.nanoTime()
-            windowFrameCount = 0
-            windowDetectionCount = 0
-        }
-    }
-
-    private fun List<TrackedBox>.remappedToVisibleRegion(meta: FrameMetadata): List<TrackedBox> {
-        val cw = if (meta.cropWidth > 0) meta.cropWidth else meta.width
-        val ch = if (meta.cropHeight > 0) meta.cropHeight else meta.height
-        if (cw == meta.width && ch == meta.height) return this // no crop, nothing to do
-
-        // Crop rect normalized to the buffer, then rotated into the same upright
-        // space the boxes live in.
-        val crop = BoundingBox(
-            left = meta.cropLeft / meta.width.toFloat(),
-            top = meta.cropTop / meta.height.toFloat(),
-            right = (meta.cropLeft + cw) / meta.width.toFloat(),
-            bottom = (meta.cropTop + ch) / meta.height.toFloat(),
-        ).rotatedToUpright(meta.rotationDegrees)
-
-        val w = crop.right - crop.left
-        val h = crop.bottom - crop.top
-        return map { tracked ->
-            tracked.copy(
-                box = BoundingBox(
-                    left = ((tracked.box.left - crop.left) / w).coerceIn(0f, 1f),
-                    top = ((tracked.box.top - crop.top) / h).coerceIn(0f, 1f),
-                    right = ((tracked.box.right - crop.left) / w).coerceIn(0f, 1f),
-                    bottom = ((tracked.box.bottom - crop.top) / h).coerceIn(0f, 1f),
-                )
-            )
-        }
+        statsCollector.onFrameProcessed(startNanos)
     }
 
     fun reset() {
-        tracker.reset()
-        keepVisible.onSessionReset()
-        lastDetectionFrameId = -1L
-        _trackedBoxes.value = emptyList()
-        _stats.value = PipelineStats()
-        renderBoxFeed.clear()
-        windowStartNanos = 0L
-        windowFrameCount = 0
-        windowDetectionCount = 0
-        lastDetectionLatencyMillis = 0L
+        stages.forEach(PipelineStage::reset)
+        // Deliberately not folded into a stage: `degraded` belongs to the
+        // orchestrator, the only component that knows a detection pass ran.
+        _degraded.value = false
     }
 }

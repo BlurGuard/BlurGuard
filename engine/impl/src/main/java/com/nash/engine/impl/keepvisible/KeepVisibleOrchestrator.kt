@@ -25,8 +25,8 @@ class KeepVisibleOrchestrator<F>(
     private val recognizer: FaceRecognizer<F>,
     private val store: TrustedPersonStore,
     private val state: KeepVisibleState,
-    private val config: RecognitionConfig
-) : KeepVisibleController {
+    private val config: RecognitionConfig,
+) : KeepVisibleController, KeepVisibleRecognizer<F> {
 
     /** Written from UI, drained on ml thread. */
     private val pendingEnrollment = AtomicLong(NO_REQUEST)
@@ -46,14 +46,18 @@ class KeepVisibleOrchestrator<F>(
         revokeAllRequested.set(true) // store wipe drained on ml thread
     }
 
-    fun onSessionReset() {
+    override fun onSessionReset() {
         pendingEnrollment.set(NO_REQUEST)
         enrollAttempts.clear()
         state.clearAll()
         Log.d(TAG, "session reset (trusted persons kept: ${store.trustedPersonCount})")
     }
 
-    suspend fun onDetectionFrame(frame: F, metadata: FrameMetadata, boxes: List<TrackedBox>) {
+    override suspend fun onDetectionFrame(
+        frame: F,
+        metadata: FrameMetadata,
+        boxes: List<TrackedBox>
+    ){
         if (revokeAllRequested.compareAndSet(true, false)) {
             store.revokeAll()
             state.clearAll()
