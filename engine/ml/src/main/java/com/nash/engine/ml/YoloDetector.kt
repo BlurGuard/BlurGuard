@@ -1,12 +1,8 @@
 package com.nash.engine.ml
 
 import android.content.Context
-import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.Rect
 import android.os.SystemClock
 import androidx.camera.core.ImageProxy
-import androidx.core.graphics.createBitmap
 import com.nash.core.common.DispatcherProvider
 import com.nash.core.model.DetectionBox
 import com.nash.core.model.DetectionClass
@@ -14,11 +10,7 @@ import com.nash.core.model.Detector
 import com.nash.core.model.DetectorConfig
 import com.nash.core.model.FrameMetadata
 import dagger.hilt.android.qualifiers.ApplicationContext
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import javax.inject.Inject
-import kotlin.math.min
-import kotlin.math.round
 import kotlinx.coroutines.withContext
 import org.tensorflow.lite.Interpreter
 
@@ -32,8 +24,9 @@ import org.tensorflow.lite.Interpreter
  * tensor shape at init, so swapping in a retrained model with more classes
  * only requires updating [CLASSES].
  *
- * Runtime creation (model loading, delegate policy, delegate lifecycle) is
- * owned by [TfliteInterpreterFactory]; this class only orchestrates a frame.
+ * Collaborators: [TfliteInterpreterFactory] owns runtime creation and delegate
+ * lifecycle, [YoloPreprocessor] owns frame -> tensor conversion,
+ * [YoloOutputDecoder] owns raw-tensor decoding.
  */
 class YoloDetector @Inject constructor(
     @param:ApplicationContext private val context: Context,
@@ -62,6 +55,11 @@ class YoloDetector @Inject constructor(
 
     private val interpreter: Interpreter get() = runtime.interpreter
 
+    /** Lazy: the layout flag can only be read once the interpreter exists. */
+    private val preprocessor: YoloPreprocessor by lazy {
+        YoloPreprocessor(inputSize = INPUT_SIZE, channelsFirst = inputIsChannelsFirst)
+    }
+
     private val decoder: YoloOutputDecoder by lazy {
         val outputShape = interpreter.getOutputTensor(0).shape() // [1, 4+nc, candidates]
         val numClasses = outputShape[1] - 4
@@ -75,67 +73,19 @@ class YoloDetector @Inject constructor(
         )
     }
 
-    // Reused across frames; only touched from the serialized ml dispatcher.
-    private val inputBuffer: ByteBuffer =
-        ByteBuffer.allocateDirect(INPUT_SIZE * INPUT_SIZE * 3 * 4).order(ByteOrder.nativeOrder())
-    private val pixels = IntArray(INPUT_SIZE * INPUT_SIZE)
-
     override suspend fun detect(
         frame: ImageProxy,
         metadata: FrameMetadata
     ): List<DetectionBox> = withContext(dispatcherProvider.ml) {
 
         val t0 = SystemClock.elapsedRealtimeNanos()
-        val bitmap = frame.toBitmap()
-        // --- Letterbox into the model input, gray padding (Ultralytics convention).
-        val scale = min(
-            INPUT_SIZE / bitmap.width.toFloat(),
-            INPUT_SIZE / bitmap.height.toFloat()
-        )
-        val scaledWidth = round(bitmap.width * scale).toInt()
-        val scaledHeight = round(bitmap.height * scale).toInt()
-        val padX = (INPUT_SIZE - scaledWidth) / 2f
-        val padY = (INPUT_SIZE - scaledHeight) / 2f
-
-        val input = createBitmap(INPUT_SIZE, INPUT_SIZE)
-        Canvas(input).apply {
-            drawColor(Color.rgb(114, 114, 114))
-            drawBitmap(
-                bitmap,
-                null,
-                Rect(
-                    padX.toInt(),
-                    padY.toInt(),
-                    padX.toInt() + scaledWidth,
-                    padY.toInt() + scaledHeight
-                ),
-                null
-            )
-        }
-
-        // --- Bitmap -> float32 RGB buffer, 0..1.
-        input.getPixels(pixels, 0, INPUT_SIZE, 0, 0, INPUT_SIZE, INPUT_SIZE)
-        inputBuffer.rewind()
-        if (inputIsChannelsFirst) {
-            // NCHW: full R plane, then G, then B.
-            for (pixel in pixels) inputBuffer.putFloat(((pixel shr 16) and 0xFF) / 255f)
-            for (pixel in pixels) inputBuffer.putFloat(((pixel shr 8) and 0xFF) / 255f)
-            for (pixel in pixels) inputBuffer.putFloat((pixel and 0xFF) / 255f)
-        } else {
-            // NHWC: interleaved RGB per pixel.
-            for (pixel in pixels) {
-                inputBuffer.putFloat(((pixel shr 16) and 0xFF) / 255f)
-                inputBuffer.putFloat(((pixel shr 8) and 0xFF) / 255f)
-                inputBuffer.putFloat((pixel and 0xFF) / 255f)
-            }
-        }
-        inputBuffer.rewind()
+        val letterbox = preprocessor.process(frame)
         val t1 = SystemClock.elapsedRealtimeNanos()
 
         // --- Inference.
         val outputShape = interpreter.getOutputTensor(0).shape()
         val output = Array(outputShape[1]) { FloatArray(outputShape[2]) }
-        interpreter.run(inputBuffer, arrayOf(output))
+        interpreter.run(preprocessor.inputBuffer, arrayOf(output))
 
         // TODO(step 3): dead scan, removed together with DetectorDiagnostics.
         var maxScore = 0f
@@ -152,13 +102,7 @@ class YoloDetector @Inject constructor(
         // --- Decode in buffer space, then rotate to upright space.
         val result = decoder.decode(
             output = output,
-            letterbox = YoloOutputDecoder.Letterbox(
-                scale = scale,
-                padX = padX,
-                padY = padY,
-                bufferWidth = bitmap.width,
-                bufferHeight = bitmap.height
-            )
+            letterbox = letterbox
         ).map { detection ->
             detection.copy(box = detection.box.rotatedToUpright(metadata.rotationDegrees))
         }
