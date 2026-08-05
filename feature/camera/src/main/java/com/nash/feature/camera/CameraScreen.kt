@@ -25,18 +25,19 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.nash.core.designsystem.theme.LocalBlurGuardSemanticColors
 import com.nash.engine.api.PreviewTarget
 import com.nash.engine.api.RecordingState
+import com.nash.feature.camera.components.FaceTapTargets
 import com.nash.feature.camera.components.KeepVisibleControls
 import com.nash.feature.camera.components.ModeChip
 import com.nash.feature.camera.components.PipelineDebugHud
 import com.nash.feature.camera.components.TrackingOverlay
-import androidx.compose.ui.platform.LocalContext
-import com.nash.feature.camera.components.FaceTapTargets
 import com.nash.feature.camera.state.CameraScreenActions
 import com.nash.feature.camera.state.CameraScreenState
 import com.nash.feature.camera.state.CameraUiState
@@ -60,6 +61,13 @@ fun CameraScreen(
     LaunchedEffect(state.uiState.errorMessage) {
         state.uiState.errorMessage?.let { message ->
             snackbarHostState.showSnackbar(message)
+            actions.onDismissError()
+        }
+    }
+
+    LaunchedEffect(state.uiState.errorMessageRes) {
+        state.uiState.errorMessageRes?.let { messageRes ->
+            snackbarHostState.showSnackbar(context.getString(messageRes))
             actions.onDismissError()
         }
     }
@@ -172,13 +180,13 @@ private fun PermissionRationale(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
-            text = "Camera and microphone access are needed to record video.",
+            text = stringResource(R.string.camera_permission_message),
             style = MaterialTheme.typography.bodyLarge,
             textAlign = TextAlign.Center
         )
         Spacer(modifier = Modifier.height(16.dp))
         Button(onClick = onRequestPermissions) {
-            Text("Grant permissions")
+            Text(stringResource(R.string.camera_grant_permissions))
         }
     }
 }
@@ -188,6 +196,7 @@ private fun RecordingOverlay(
     uiState: CameraUiState,
     modifier: Modifier = Modifier
 ) {
+    val overlayColors = LocalBlurGuardSemanticColors.current
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -200,11 +209,11 @@ private fun RecordingOverlay(
 
             is RecordingState.Saved -> {
                 Text(
-                    text = "Saved: ${state.uri}",
-                    color = Color.White,
+                    text = stringResource(R.string.camera_saved_video, state.uri),
+                    color = overlayColors.overlayOnScrim,
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier
-                        .background(Color.Black.copy(alpha = 0.5f))
+                        .background(overlayColors.overlayScrim)
                         .padding(8.dp)
                 )
             }
@@ -216,14 +225,18 @@ private fun RecordingOverlay(
 
 @Composable
 private fun RecordingIndicator(durationSeconds: Int) {
+    val overlayColors = LocalBlurGuardSemanticColors.current
     Box(
         modifier = Modifier
-            .background(Color.Black.copy(alpha = 0.5f))
+            .background(overlayColors.overlayScrim)
             .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
         Text(
-            text = "● REC ${formatDuration(durationSeconds)}",
-            color = Color.Red,
+            text = stringResource(
+                R.string.camera_recording_indicator,
+                formatDuration(durationSeconds)
+            ),
+            color = overlayColors.recordingRed,
             style = MaterialTheme.typography.bodyLarge
         )
     }
@@ -237,6 +250,7 @@ private fun Controls(
     onStopClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val overlayColors = LocalBlurGuardSemanticColors.current
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -248,7 +262,7 @@ private fun Controls(
                 modifier = Modifier
                     .size(72.dp)
                     .clip(CircleShape)
-                    .background(Color.White)
+                    .background(overlayColors.overlayOnScrim)
                     .clickable(enabled = !isBusy, onClick = onStopClick)
                     .padding(16.dp),
                 contentAlignment = Alignment.Center
@@ -257,7 +271,7 @@ private fun Controls(
                     modifier = Modifier
                         .size(32.dp)
                         .clip(RoundedCornerShape(4.dp))
-                        .background(Color.Red)
+                        .background(overlayColors.recordingRed)
                 )
             }
         } else {
@@ -265,13 +279,13 @@ private fun Controls(
                 modifier = Modifier
                     .size(72.dp)
                     .clip(CircleShape)
-                    .background(Color.Red)
+                    .background(overlayColors.recordingRed)
                     .clickable(enabled = !isBusy, onClick = onRecordClick),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "REC",
-                    color = Color.White,
+                    text = stringResource(R.string.camera_record_button_label),
+                    color = overlayColors.overlayOnScrim,
                     style = MaterialTheme.typography.labelLarge
                 )
             }

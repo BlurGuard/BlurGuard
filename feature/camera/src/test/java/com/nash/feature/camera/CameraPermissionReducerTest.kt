@@ -5,7 +5,6 @@ import com.nash.feature.camera.state.CameraEvent
 import com.nash.feature.camera.state.CameraUiState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -23,18 +22,16 @@ class CameraPermissionReducerTest {
     }
 
     @Test
-    fun `camera denied clears flag, shows rationale, sets error`() {
+    fun `camera denied clears flag, shows rationale, sets error resource`() {
         val result = CameraPermissionReducer.reduce(
             CameraUiState(cameraPermissionGranted = true),
             CameraEvent.OnCameraPermissionDenied
         )
         assertFalse(result.cameraPermissionGranted)
         assertTrue(result.showCameraPermissionRationale)
-        assertNotNull(result.errorMessage)
-        assertEquals(
-            CameraPermissionReducer.CAMERA_PERMISSION_REQUIRED_MESSAGE,
-            result.errorMessage
-        )
+        // Fixed app strings travel as @StringRes ids, not hardcoded literals.
+        assertNull(result.errorMessage)
+        assertEquals(R.string.camera_permission_required, result.errorMessageRes)
     }
 
     @Test
@@ -56,6 +53,7 @@ class CameraPermissionReducerTest {
         assertFalse(result.audioPermissionGranted)
         assertTrue(result.showAudioPermissionRationale)
         assertNull(result.errorMessage)
+        assertNull(result.errorMessageRes)
     }
 
     @Test
