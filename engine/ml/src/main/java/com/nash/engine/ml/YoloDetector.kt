@@ -1,19 +1,17 @@
 package com.nash.engine.ml
 
 import android.content.Context
-import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Rect
 import android.os.SystemClock
-import android.util.Log
 import androidx.camera.core.ImageProxy
+import androidx.core.graphics.createBitmap
 import com.nash.core.common.DispatcherProvider
 import com.nash.core.model.DetectionBox
 import com.nash.core.model.DetectionClass
 import com.nash.core.model.Detector
 import com.nash.core.model.DetectorConfig
-import com.nash.core.model.DetectorDelegate
 import com.nash.core.model.FrameMetadata
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.nio.ByteBuffer
@@ -23,25 +21,25 @@ import kotlin.math.min
 import kotlin.math.round
 import kotlinx.coroutines.withContext
 import org.tensorflow.lite.Interpreter
-import org.tensorflow.lite.nnapi.NnApiDelegate
-import androidx.core.graphics.createBitmap
 
 /**
  * Fine-tuned YOLO detector (faces + license plates, single model) running on
- * LiteRT (CPU/XNNPACK — GPU stays reserved for the render path).
+ * LiteRT (NNAPI when available, otherwise CPU/XNNPACK — GPU stays reserved for
+ * the render path).
  *
  * Input: 320x320x3 RGB float32 (0..1), letterboxed. Output: [1, 6, 2100]
  * (cx, cy, w, h, face score, plate score). Class count is read from the
  * tensor shape at init, so swapping in a retrained model with more classes
  * only requires updating [CLASSES].
+ *
+ * Runtime creation (model loading, delegate policy, delegate lifecycle) is
+ * owned by [TfliteInterpreterFactory]; this class only orchestrates a frame.
  */
 class YoloDetector @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val dispatcherProvider: DispatcherProvider,
     private val config: DetectorConfig
 ) : Detector<ImageProxy> {
-
-    private var nnApiDelegate: NnApiDelegate? = null
 
     // --- Split-timing probes (debug). EMA-smoothed, logged once per second.
     private var emaPreprocessMs = 0.0
@@ -53,46 +51,16 @@ class YoloDetector @Inject constructor(
     private fun updateEma(current: Double, sample: Double): Double =
         if (timedFrames == 0L) sample else current * 0.9 + sample * 0.1
 
-    private val interpreter: Interpreter by lazy {
-        val model = context.assets.open(MODEL_ASSET).use { it.readBytes() }
-        val buffer = ByteBuffer.allocateDirect(model.size).order(ByteOrder.nativeOrder())
-        buffer.put(model)
-        buffer.rewind()
-//        Log.e("YoloDetector", "Model size: ${model.size}")
-        if (config.delegate == DetectorDelegate.NPU) {
-
-
-            try {
-                val delegate = NnApiDelegate(
-                    NnApiDelegate.Options()
-                        .setAllowFp16(true)
-                        .setExecutionPreference(
-                            NnApiDelegate.Options.EXECUTION_PREFERENCE_SUSTAINED_SPEED
-                        )
-                        // Compilation cache: first-run driver compile is slow;
-                        // bump the token whenever the model file changes.
-                        .setCacheDir(context.cacheDir.absolutePath)
-                        .setModelToken("yolo_face_plate_v1")
-                )
-//                Log.e("YoloDetector", "Model size: ${model.size}")
-                val interpreter = Interpreter(
-                    buffer,
-                    Interpreter.Options().addDelegate(delegate)
-                )
-                nnApiDelegate = delegate
-//                Log.e("YoloDetector", "NNAPI delegate created ${interpreter}}")
-                return@lazy interpreter
-            } catch (e: Exception) {
-//                Log.e("YoloDetector", "NNAPI delegate failed", e)
-                // NNAPI unavailable or model unsupported by the driver:
-                // fall through to CPU rather than crashing the pipeline.
-                nnApiDelegate?.close()
-                nnApiDelegate = null
-            }
-        }
-
-        Interpreter(buffer, Interpreter.Options().setNumThreads(NUM_THREADS))
+    /** Lazy so the model load happens on first use (ml dispatcher), not at DI time. */
+    private val runtime: TfliteRuntime by lazy {
+        TfliteInterpreterFactory(context).create(
+            modelAsset = MODEL_ASSET,
+            delegate = config.delegate,
+            modelToken = MODEL_TOKEN
+        )
     }
+
+    private val interpreter: Interpreter get() = runtime.interpreter
 
     private val decoder: YoloOutputDecoder by lazy {
         val outputShape = interpreter.getOutputTensor(0).shape() // [1, 4+nc, candidates]
@@ -169,6 +137,7 @@ class YoloDetector @Inject constructor(
         val output = Array(outputShape[1]) { FloatArray(outputShape[2]) }
         interpreter.run(inputBuffer, arrayOf(output))
 
+        // TODO(step 3): dead scan, removed together with DetectorDiagnostics.
         var maxScore = 0f
         var maxCoord = 0f
         for (c in output.indices) {
@@ -178,10 +147,8 @@ class YoloDetector @Inject constructor(
                 else { if (v > maxScore) maxScore = v }
             }
         }
-//        Log.d("YoloDetector", "raw: maxScore=%.3f maxCoord=%.1f".format(maxScore, maxCoord))
         val t2 = SystemClock.elapsedRealtimeNanos()
 
-//        Log.e("YoloDetector", "Inference done ${output.size}")
         // --- Decode in buffer space, then rotate to upright space.
         val result = decoder.decode(
             output = output,
@@ -204,27 +171,20 @@ class YoloDetector @Inject constructor(
         val nowMs = SystemClock.uptimeMillis()
         if (nowMs - lastLogUptimeMs >= 1_000L) {
             lastLogUptimeMs = nowMs
-//            Log.d(
-//                "YoloDetector",
-//                "split(ms): pre=%.1f infer=%.1f decode=%.1f total=%.1f (n=%d)".format(
-//                    emaPreprocessMs, emaInferenceMs, emaDecodeMs,
-//                    emaPreprocessMs + emaInferenceMs + emaDecodeMs, timedFrames
-//                )
-//            )
         }
         result
     }
 
     override fun close() {
-        interpreter.close()
-        nnApiDelegate?.close()
-        nnApiDelegate = null
+        runtime.close()
     }
 
     private companion object {
         const val MODEL_ASSET = "best_int8_320.tflite"
         const val INPUT_SIZE = 320
-        const val NUM_THREADS = 2
+
+        /** Compilation-cache token; bump whenever [MODEL_ASSET] changes. */
+        const val MODEL_TOKEN = "yolo_face_plate_v1"
 
         /** Class order MUST match the training data.yaml. */
         val CLASSES = listOf(
