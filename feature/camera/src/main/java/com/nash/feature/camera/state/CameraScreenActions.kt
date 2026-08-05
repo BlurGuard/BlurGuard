@@ -1,8 +1,8 @@
-package com.nash.feature.camera
+package com.nash.feature.camera.state
 
 import com.nash.core.model.TrackId
 
-/** Every event [CameraScreen] can emit, grouped in one stable object. */
+/** Every event [com.nash.feature.camera.CameraScreen] can emit, grouped in one stable object. */
 data class CameraScreenActions(
     val onRecordClick: () -> Unit,
     val onStopClick: () -> Unit,

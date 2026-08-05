@@ -15,6 +15,7 @@ import com.nash.engine.api.PreviewTarget
 import com.nash.engine.api.RecordingRequest
 import com.nash.engine.api.RecordingState
 import com.nash.engine.api.TrustedFaceRef
+import com.nash.feature.camera.controller.KeepVisibleUiController
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow

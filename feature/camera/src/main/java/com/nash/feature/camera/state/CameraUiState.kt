@@ -1,4 +1,4 @@
-package com.nash.feature.camera
+package com.nash.feature.camera.state
 
 import androidx.annotation.StringRes
 import com.nash.engine.api.AnonymizationMode

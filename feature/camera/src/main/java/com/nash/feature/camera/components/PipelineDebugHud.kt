@@ -13,7 +13,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.nash.core.model.PipelineStats
-import com.nash.feature.camera.CameraDebugStatsUiModel
+import com.nash.feature.camera.state.CameraDebugStatsUiModel
 
 /**
  * Debug-only pipeline HUD: frame/detection rates, latency, and tracked-ID

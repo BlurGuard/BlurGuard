@@ -1,7 +1,10 @@
-package com.nash.feature.camera
+package com.nash.feature.camera.controller
+
+import com.nash.feature.camera.state.CameraEvent
+import com.nash.feature.camera.state.CameraUiState
 
 /**
- * Pure reducer for permission-related [CameraEvent]s.
+ * Pure reducer for permission-related [com.nash.feature.camera.state.CameraEvent]s.
  * No coroutines, no Android types — trivially unit-testable.
  */
 object CameraPermissionReducer {

@@ -4,6 +4,8 @@ import com.nash.core.model.BoundingBox
 import com.nash.core.model.DetectionClass
 import com.nash.core.model.TrackId
 import com.nash.core.model.TrackedBox
+import com.nash.feature.camera.controller.DebugStatsTracker
+import com.nash.feature.camera.state.CameraDebugStatsUiModel
 import org.junit.Assert.assertEquals
 import org.junit.Test
 

@@ -13,6 +13,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberMultiplePermissionsState
+import com.nash.feature.camera.state.CameraEvent
+import com.nash.feature.camera.state.CameraScreenActions
+import com.nash.feature.camera.state.CameraScreenState
 
 /**
  * Route entry point for the camera recording screen.

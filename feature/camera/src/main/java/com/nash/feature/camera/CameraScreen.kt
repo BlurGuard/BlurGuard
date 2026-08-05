@@ -37,12 +37,15 @@ import com.nash.feature.camera.components.PipelineDebugHud
 import com.nash.feature.camera.components.TrackingOverlay
 import androidx.compose.ui.platform.LocalContext
 import com.nash.feature.camera.components.FaceTapTargets
+import com.nash.feature.camera.state.CameraScreenActions
+import com.nash.feature.camera.state.CameraScreenState
+import com.nash.feature.camera.state.CameraUiState
 
 /**
  * Camera recording screen.
  *
- * Pure layout coordinator: all state comes in via [CameraScreenState], all
- * events go out via [CameraScreenActions]. Debug-only surfaces (tracking
+ * Pure layout coordinator: all state comes in via [com.nash.feature.camera.state.CameraScreenState], all
+ * events go out via [com.nash.feature.camera.state.CameraScreenActions]. Debug-only surfaces (tracking
  * overlay + pipeline HUD) are gated by [showDebugOverlays].
  */
 @Composable

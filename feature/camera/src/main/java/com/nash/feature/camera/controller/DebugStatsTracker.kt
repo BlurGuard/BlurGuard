@@ -1,6 +1,7 @@
-package com.nash.feature.camera
+package com.nash.feature.camera.controller
 
 import com.nash.core.model.TrackedBox
+import com.nash.feature.camera.state.CameraDebugStatsUiModel
 
 /**
  * Accumulates unique track IDs for the debug HUD.

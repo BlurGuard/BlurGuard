@@ -11,6 +11,13 @@ import com.nash.core.model.TrackedBox
 import com.nash.engine.api.AnonymizationMode
 import com.nash.engine.api.BlurGuardEngine
 import com.nash.engine.api.PreviewTarget
+import com.nash.feature.camera.controller.CameraPermissionReducer
+import com.nash.feature.camera.controller.DebugStatsTracker
+import com.nash.feature.camera.controller.KeepVisibleUiController
+import com.nash.feature.camera.controller.RecordingController
+import com.nash.feature.camera.state.CameraDebugStatsUiModel
+import com.nash.feature.camera.state.CameraEvent
+import com.nash.feature.camera.state.CameraUiState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,9 +31,9 @@ import kotlinx.coroutines.launch
 
 /**
  * Thin coordinator for the camera screen: combines collaborator flows into
- * [CameraUiState] and routes events. All workflow logic lives in
- * [CameraPermissionReducer], [RecordingController], [KeepVisibleUiController],
- * and [DebugStatsTracker].
+ * [com.nash.feature.camera.state.CameraUiState] and routes events. All workflow logic lives in
+ * [com.nash.feature.camera.controller.CameraPermissionReducer], [com.nash.feature.camera.controller.RecordingController], [com.nash.feature.camera.controller.KeepVisibleUiController],
+ * and [com.nash.feature.camera.controller.DebugStatsTracker].
  */
 @HiltViewModel
 class CameraViewModel @Inject constructor(

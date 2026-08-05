@@ -1,4 +1,4 @@
-package com.nash.feature.camera
+package com.nash.feature.camera.controller
 
 import com.nash.core.common.DispatcherProvider
 import com.nash.engine.api.BlurGuardEngine
@@ -14,7 +14,7 @@ import kotlinx.coroutines.launch
 
 /**
  * Owns the recording workflow: start/stop calls against the engine and
- * mapping engine [RecordingState] emissions into UI-friendly fields.
+ * mapping engine [com.nash.engine.api.RecordingState] emissions into UI-friendly fields.
  *
  * Plain class — no Compose or Android View types.
  */

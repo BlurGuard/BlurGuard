@@ -1,4 +1,4 @@
-package com.nash.feature.camera
+package com.nash.feature.camera.controller
 
 import androidx.annotation.StringRes
 import com.nash.core.common.DispatcherProvider
@@ -7,6 +7,7 @@ import com.nash.core.model.TrackVerification
 import com.nash.core.model.VerificationState
 import com.nash.engine.api.BlurGuardEngine
 import com.nash.engine.api.TrustedFaceRef
+import com.nash.feature.camera.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow

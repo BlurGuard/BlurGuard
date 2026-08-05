@@ -1,5 +1,8 @@
 package com.nash.feature.camera
 
+import com.nash.feature.camera.controller.CameraPermissionReducer
+import com.nash.feature.camera.state.CameraEvent
+import com.nash.feature.camera.state.CameraUiState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull

@@ -1,4 +1,4 @@
-package com.nash.feature.camera
+package com.nash.feature.camera.state
 
 import com.nash.core.model.PipelineStats
 import com.nash.core.model.TrackId
@@ -7,7 +7,7 @@ import com.nash.core.model.TrackedBox
 import com.nash.engine.api.AnonymizationMode
 
 /**
- * Everything [CameraScreen] renders, grouped in one immutable model.
+ * Everything [com.nash.feature.camera.CameraScreen] renders, grouped in one immutable model.
  * Must not reference [androidx.lifecycle.ViewModel] types.
  */
 data class CameraScreenState(
