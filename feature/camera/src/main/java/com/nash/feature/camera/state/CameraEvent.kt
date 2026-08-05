@@ -1,4 +1,4 @@
-package com.nash.feature.camera
+package com.nash.feature.camera.state
 
 sealed interface CameraEvent {
     data object OnCameraPermissionGranted : CameraEvent

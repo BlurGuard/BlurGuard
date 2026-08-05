@@ -1,13 +1,9 @@
-package com.nash.feature.camera
+package com.nash.feature.camera.state
 
+import androidx.annotation.StringRes
 import com.nash.engine.api.AnonymizationMode
 import com.nash.engine.api.RecordingState
 
-/**
- * Immutable UI state for the camera recording screen.
- *
- * Contains no frame, pixel, or Surface data.
- */
 data class CameraUiState(
     val cameraPermissionGranted: Boolean = false,
     val audioPermissionGranted: Boolean = false,
@@ -17,7 +13,8 @@ data class CameraUiState(
     val durationSeconds: Int = 0,
     val lastSavedUri: String? = null,
     val errorMessage: String? = null,
-    val keepVisibleMessage: String? = null,
+    /** One-shot keep-visible verification message, as a string resource id. */
+    @StringRes val keepVisibleMessage: Int? = null,
     val anonymizationMode: AnonymizationMode = AnonymizationMode.BLUR
 ) {
     val isRecording: Boolean

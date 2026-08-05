@@ -5,16 +5,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.remember
-import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.nash.engine.api.PreviewTarget
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberMultiplePermissionsState
-import com.google.accompanist.permissions.shouldShowRationale
+import com.nash.feature.camera.state.CameraEvent
+import com.nash.feature.camera.state.CameraScreenActions
+import com.nash.feature.camera.state.CameraScreenState
 
 /**
  * Route entry point for the camera recording screen.
@@ -77,24 +78,37 @@ fun CameraRoute(
             viewModel.onEvent(CameraEvent.OnAudioPermissionDenied)
         }
     }
+
     val trackedBoxes by viewModel.trackedBoxes.collectAsStateWithLifecycle()
     val pipelineStats by viewModel.pipelineStats.collectAsStateWithLifecycle()
     val idStats by viewModel.idStats.collectAsStateWithLifecycle()
     val keepVisible by viewModel.keepVisible.collectAsStateWithLifecycle()
+
+    // Stable across recompositions: only rebuilt if the VM or permission
+    // controller instance changes.
+    val actions = remember(viewModel, permissions) {
+        CameraScreenActions(
+            onRecordClick = { viewModel.onEvent(CameraEvent.OnRecordClicked) },
+            onStopClick = { viewModel.onEvent(CameraEvent.OnStopRecordingClicked) },
+            onRequestPermissions = { permissions.launchMultiplePermissionRequest() },
+            onDismissError = { viewModel.onEvent(CameraEvent.OnErrorDismissed) },
+            onModeClick = { viewModel.onModeClicked() },
+            onFaceTapped = { viewModel.onFaceTapped(it) },
+            onRevokeAllKeepVisible = { viewModel.onRevokeAllKeepVisible() },
+            onKeepVisibleMessageShown = { viewModel.onKeepVisibleMessageShown() }
+        )
+    }
+
     CameraScreen(
-        uiState = uiState,
+        state = CameraScreenState(
+            uiState = uiState,
+            trackedBoxes = trackedBoxes,
+            stats = pipelineStats,
+            debugStats = idStats,
+            mode = uiState.anonymizationMode,
+            keepVisible = keepVisible
+        ),
         previewTarget = previewTarget,
-        onRecordClick = { viewModel.onEvent(CameraEvent.OnRecordClicked) },
-        onStopClick = { viewModel.onEvent(CameraEvent.OnStopRecordingClicked) },
-        onRequestPermissions = { permissions.launchMultiplePermissionRequest() },
-        onDismissError = { viewModel.onEvent(CameraEvent.OnErrorDismissed) },
-        trackedBoxes = trackedBoxes,
-        stats = pipelineStats,
-        mode = uiState.anonymizationMode,
-        onModeClick = { viewModel.onModeClicked() },
-        idStats = idStats,
-        keepVisible = keepVisible,
-        onFaceTapped = { viewModel.onFaceTapped(it) },
-        onRevokeAllKeepVisible = { viewModel.onRevokeAllKeepVisible() }
+        actions = actions
     )
 }
