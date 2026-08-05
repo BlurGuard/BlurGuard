@@ -3,7 +3,6 @@ package com.nash.engine.ml.recognition
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Matrix
-import android.os.SystemClock
 import android.util.Log
 import androidx.camera.core.ImageProxy
 import com.nash.core.common.DispatcherProvider
@@ -12,6 +11,7 @@ import com.nash.core.model.FaceEmbedding
 import com.nash.core.model.FaceRecognizer
 import com.nash.core.model.FrameMetadata
 import com.nash.core.model.RecognitionConfig
+import com.nash.engine.ml.isDebugBuild
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.withContext
 import org.tensorflow.lite.Interpreter
@@ -24,9 +24,12 @@ import javax.inject.Singleton
  * MobileFaceNet embedding extractor: upright frame -> dilated crop -> BlazeFace
  * landmark alignment (FaceAligner) -> 112x112 -> embedding -> L2 normalize.
  *
- * CPU/XNNPACK, 2 threads — same accelerator policy as YoloDetector (GPU stays
- * dedicated to the anonymization renderer). Runs sporadically on the ml
- * dispatcher, never per frame.
+ * Lives in engine/ml with every other on-device model wrapper. Identity policy
+ * — matching, trust, re-verification cadence — belongs to engine/recognition
+ * and reaches this class only through [FaceRecognizer].
+ *
+ * CPU/XNNPACK, 2 threads: the GPU stays dedicated to the anonymization
+ * renderer (NFR-02). Runs sporadically on the ml dispatcher, never per frame.
  */
 @Singleton
 class MobileFaceNetRecognizer @Inject constructor(
@@ -35,6 +38,12 @@ class MobileFaceNetRecognizer @Inject constructor(
     private val config: RecognitionConfig
 ) : FaceRecognizer<ImageProxy> {
 
+    /**
+     * Debug-only logging switch, same source of truth as the detector's
+     * diagnostics. Release builds never build a model-spec log string.
+     */
+    private val debugLogging: Boolean = context.isDebugBuild()
+
     private val aligner by lazy { FaceAligner(context, config) }
 
     private val interpreter: Interpreter by lazy {
@@ -42,27 +51,42 @@ class MobileFaceNetRecognizer @Inject constructor(
         val buffer = ByteBuffer.allocateDirect(model.size).order(ByteOrder.nativeOrder())
         buffer.put(model)
         buffer.rewind()
-        val tempInterperter: Interpreter =Interpreter(buffer, Interpreter.Options().setNumThreads(NUM_THREADS))
+        val tempInterpreter = Interpreter(
+            buffer,
+            Interpreter.Options().setNumThreads(NUM_THREADS)
+        )
 
-        Log.i(TAG, "model spec: input=${tempInterperter.getInputTensor(0).shape().contentToString()} " +
-                "${tempInterperter.getInputTensor(0).dataType()} " +
-                "output=${tempInterperter.getOutputTensor(0).shape().contentToString()} " +
-                "${tempInterperter.getOutputTensor(0).dataType()}")
+        if (debugLogging) {
+            Log.i(
+                TAG,
+                "model spec: input=${tempInterpreter.getInputTensor(0).shape().contentToString()} " +
+                        "${tempInterpreter.getInputTensor(0).dataType()} " +
+                        "output=${tempInterpreter.getOutputTensor(0).shape().contentToString()} " +
+                        "${tempInterpreter.getOutputTensor(0).dataType()}"
+            )
+        }
 
-        tempInterperter
+        tempInterpreter
     }
-
 
     private val embeddingSize: Int by lazy {
         // Pin the input to a concrete shape and allocate before reading the
         // output shape — some converted models report 0/dynamic dims until then.
         interpreter.resizeInput(0, intArrayOf(1, INPUT_SIZE, INPUT_SIZE, 3))
         interpreter.allocateTensors()
-        val inShape = interpreter.getInputTensor(0).shape()
         val outShape = interpreter.getOutputTensor(0).shape()
-        Log.i(TAG, "model spec (allocated): input=${inShape.contentToString()} " +
-                "${interpreter.getInputTensor(0).dataType()} " +
-                "output=${outShape.contentToString()} ${interpreter.getOutputTensor(0).dataType()}")
+
+        if (debugLogging) {
+            Log.i(
+                TAG,
+                "model spec (allocated): " +
+                        "input=${interpreter.getInputTensor(0).shape().contentToString()} " +
+                        "${interpreter.getInputTensor(0).dataType()} " +
+                        "output=${outShape.contentToString()} " +
+                        "${interpreter.getOutputTensor(0).dataType()}"
+            )
+        }
+
         val size = outShape.last()
         require(size > 0) { "Unusable output shape ${outShape.contentToString()}" }
         size
@@ -73,22 +97,11 @@ class MobileFaceNetRecognizer @Inject constructor(
     }
     private val pixels = IntArray(INPUT_SIZE * INPUT_SIZE)
 
-    // Split-timing probes (debug), same EMA pattern as YoloDetector.
-    private var emaAlignMs = 0.0
-    private var emaInferMs = 0.0
-    private var timedCalls = 0L
-    private var lastLogUptimeMs = 0L
-
     override suspend fun embed(
         frame: ImageProxy,
         faceBox: BoundingBox,
         metadata: FrameMetadata
     ): FaceEmbedding? = withContext(dispatcherProvider.ml) {
-//        Log.d(TAG, "input=${interpreter.getInputTensor(0).shape().contentToString()} " +
-//                "${interpreter.getInputTensor(0).dataType()} " +
-//                "output=${interpreter.getOutputTensor(0).shape().contentToString()}")
-        val t0 = SystemClock.elapsedRealtimeNanos()
-
         // 1) Upright bitmap. faceBox is in upright normalized space, so rotate
         //    the buffer first and crop with no coordinate gymnastics.
         val upright = frame.toBitmap().rotatedToUpright(metadata.rotationDegrees)
@@ -107,7 +120,6 @@ class MobileFaceNetRecognizer @Inject constructor(
 
         // 3) Landmark alignment. Null = quality gate failed = no decision.
         val aligned = aligner.align(crop) ?: return@withContext null
-        val t1 = SystemClock.elapsedRealtimeNanos()
 
         // 4) Preprocess: MobileFaceNet convention (x - 127.5) / 127.5, NHWC RGB.
         aligned.getPixels(pixels, 0, INPUT_SIZE, 0, 0, INPUT_SIZE, INPUT_SIZE)
@@ -126,9 +138,6 @@ class MobileFaceNetRecognizer @Inject constructor(
             Log.e(TAG, "inference failed", e)
             return@withContext null
         }
-        val t2 = SystemClock.elapsedRealtimeNanos()
-
-        logTimings((t1 - t0) / 1e6, (t2 - t1) / 1e6)
 
         // 5) L2 normalize; degenerate vectors become null (fail-closed).
         FaceEmbedding.fromRaw(output[0])
@@ -147,18 +156,6 @@ class MobileFaceNetRecognizer @Inject constructor(
 
     private fun width(box: BoundingBox) = box.right - box.left
     private fun height(box: BoundingBox) = box.bottom - box.top
-
-    private fun logTimings(alignMs: Double, inferMs: Double) {
-        emaAlignMs = if (timedCalls == 0L) alignMs else emaAlignMs * 0.9 + alignMs * 0.1
-        emaInferMs = if (timedCalls == 0L) inferMs else emaInferMs * 0.9 + inferMs * 0.1
-        timedCalls++
-        val now = SystemClock.uptimeMillis()
-        if (now - lastLogUptimeMs >= 1000) {
-            lastLogUptimeMs = now
-//            Log.d(TAG, "align=%.1fms infer=%.1fms calls=%d"
-//                .format(emaAlignMs, emaInferMs, timedCalls))
-        }
-    }
 
     private companion object {
         const val TAG = "FaceRecognizer"
