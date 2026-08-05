@@ -10,6 +10,7 @@ import com.nash.core.model.TrackVerification
 import com.nash.core.model.TrackedBox
 import com.nash.engine.api.AnonymizationMode
 import com.nash.engine.api.BlurGuardEngine
+import com.nash.engine.api.EngineWarning
 import com.nash.engine.api.PreviewTarget
 import com.nash.feature.camera.controller.CameraPermissionReducer
 import com.nash.feature.camera.controller.DebugStatsTracker
@@ -70,7 +71,7 @@ class CameraViewModel @Inject constructor(
     private fun observeWarnings() {
         viewModelScope.launch {
             engine.observeWarnings().collect { warning ->
-                _uiState.update { it.copy(errorMessage = warning.toString()) }
+                _uiState.update { it.copy(errorMessageRes = warning.toMessageRes()) }
             }
         }
     }
@@ -122,7 +123,7 @@ class CameraViewModel @Inject constructor(
 
             CameraEvent.OnErrorDismissed -> {
                 recordingController.consumeError()
-                _uiState.update { it.copy(errorMessage = null) }
+                _uiState.update { it.copy(errorMessage = null, errorMessageRes = null) }
             }
         }
     }
@@ -146,6 +147,20 @@ class CameraViewModel @Inject constructor(
         _uiState.update { it.copy(anonymizationMode = nextMode) }
         viewModelScope.launch {
             engine.updateAnonymizationMode(nextMode)
+        }
+    }
+
+    private companion object {
+        /**
+         * Engine warnings are fixed app strings: map them to user-facing,
+         * localizable resources instead of leaking `warning.toString()`.
+         */
+        fun EngineWarning.toMessageRes(): Int = when (this) {
+            is EngineWarning.MlInitializationFailed -> R.string.warning_ml_init_failed
+            is EngineWarning.HighLatency -> R.string.warning_high_latency
+            is EngineWarning.StorageLow -> R.string.warning_storage_low
+            EngineWarning.CameraTimedOut -> R.string.warning_camera_timed_out
+            EngineWarning.DetectionDegraded -> R.string.warning_detection_degraded
         }
     }
 }

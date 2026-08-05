@@ -1,16 +1,18 @@
 package com.nash.feature.camera.controller
 
+import com.nash.feature.camera.R
 import com.nash.feature.camera.state.CameraEvent
 import com.nash.feature.camera.state.CameraUiState
 
 /**
  * Pure reducer for permission-related [com.nash.feature.camera.state.CameraEvent]s.
  * No coroutines, no Android types — trivially unit-testable.
+ *
+ * The denied-camera error is a fixed app string, so it travels as a
+ * @StringRes id on [CameraUiState.errorMessageRes] (localizable), not as a
+ * hardcoded English literal.
  */
 object CameraPermissionReducer {
-
-    const val CAMERA_PERMISSION_REQUIRED_MESSAGE =
-        "Camera permission is required to record video."
 
     fun reduce(state: CameraUiState, event: CameraEvent): CameraUiState = when (event) {
         CameraEvent.OnCameraPermissionGranted -> state.copy(
@@ -21,7 +23,7 @@ object CameraPermissionReducer {
         CameraEvent.OnCameraPermissionDenied -> state.copy(
             cameraPermissionGranted = false,
             showCameraPermissionRationale = true,
-            errorMessage = CAMERA_PERMISSION_REQUIRED_MESSAGE
+            errorMessageRes = R.string.camera_permission_required
         )
 
         CameraEvent.OnAudioPermissionGranted -> state.copy(

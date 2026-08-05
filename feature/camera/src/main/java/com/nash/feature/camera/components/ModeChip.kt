@@ -8,9 +8,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.nash.core.designsystem.theme.LocalBlurGuardSemanticColors
 import com.nash.engine.api.AnonymizationMode
 
 /** Tappable chip showing the active anonymization mode; cycles on click. */
@@ -20,12 +20,13 @@ fun ModeChip(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val overlayColors = LocalBlurGuardSemanticColors.current
     Text(
         text = mode.name,
-        color = Color.White,
+        color = overlayColors.overlayOnScrim,
         style = MaterialTheme.typography.labelMedium,
         modifier = modifier
-            .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(4.dp))
+            .background(overlayColors.overlayScrim, RoundedCornerShape(4.dp))
             .clickable { onClick() }
             .padding(horizontal = 8.dp, vertical = 4.dp)
     )
