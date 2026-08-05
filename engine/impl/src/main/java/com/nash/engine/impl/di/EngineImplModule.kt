@@ -51,7 +51,7 @@ object EngineImplModule {
      */
     @Provides
     @Singleton
-    fun provideAnonymizationPipeline(
+    internal fun provideAnonymizationPipeline(
         factory: ImageProxyAnonymizationPipelineFactory,
     ): DefaultAnonymizationPipeline<ImageProxy> = factory.create()
 
