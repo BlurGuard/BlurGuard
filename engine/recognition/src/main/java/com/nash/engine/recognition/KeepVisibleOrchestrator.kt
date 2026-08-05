@@ -1,16 +1,18 @@
-package com.nash.engine.impl.keepvisible
+package com.nash.engine.recognition
 
 import android.util.Log
 import com.nash.core.model.DetectionClass
 import com.nash.core.model.FaceRecognizer
 import com.nash.core.model.FrameMetadata
-import com.nash.core.model.KeepVisibleState
+import com.nash.core.model.KeepVisibleStateStore
 import com.nash.core.model.RecognitionConfig
 import com.nash.core.model.TrackId
 import com.nash.core.model.TrackVerification
 import com.nash.core.model.TrackedBox
 import com.nash.core.model.TrustedPersonStore
 import com.nash.core.model.VerificationState
+import com.nash.engine.api.keepvisible.KeepVisibleController
+import com.nash.engine.api.keepvisible.KeepVisibleRecognizer
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
@@ -18,13 +20,17 @@ import java.util.concurrent.atomic.AtomicLong
  * Person-level keep-visible trust. Runs on the ml thread inside the pipeline's
  * detection branch; UI threads only touch the atomics via [KeepVisibleController].
  *
+ * Owns identity policy and nothing else: it reaches the embedding model only
+ * through [FaceRecognizer], so engine/recognition needs no TFLite or MediaPipe
+ * dependency and no dependency on engine/ml (review fix 15).
+ *
  * Budget: at most ONE recognizer call per detection frame, priority-ordered:
  * pending tap > verify unknown/pending > re-verify trusted > recheck rejected.
  */
 class KeepVisibleOrchestrator<F>(
     private val recognizer: FaceRecognizer<F>,
     private val store: TrustedPersonStore,
-    private val state: KeepVisibleState,
+    private val state: KeepVisibleStateStore,
     private val config: RecognitionConfig,
 ) : KeepVisibleController, KeepVisibleRecognizer<F> {
 
@@ -57,7 +63,7 @@ class KeepVisibleOrchestrator<F>(
         frame: F,
         metadata: FrameMetadata,
         boxes: List<TrackedBox>
-    ){
+    ) {
         if (revokeAllRequested.compareAndSet(true, false)) {
             store.revokeAll()
             state.clearAll()

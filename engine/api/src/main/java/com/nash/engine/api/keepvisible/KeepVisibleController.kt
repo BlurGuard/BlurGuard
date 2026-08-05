@@ -1,4 +1,4 @@
-package com.nash.engine.impl.keepvisible
+package com.nash.engine.api.keepvisible
 
 import com.nash.core.model.TrackId
 
@@ -6,6 +6,9 @@ import com.nash.core.model.TrackId
  * UI-facing entry points for the keep-visible feature. Non-generic so use
  * cases can inject it without knowing the pipeline's frame type.
  * Safe to call from any thread; work happens on the ml dispatcher.
+ *
+ * Lives in engine/api because both sides are now outside engine/impl: the
+ * implementation is in engine/recognition and the callers are use cases.
  */
 interface KeepVisibleController {
 

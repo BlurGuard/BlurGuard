@@ -7,10 +7,10 @@ import com.nash.core.model.FaceRecognizer
 import com.nash.core.model.FrameMetadata
 import com.nash.core.model.KeepVisibleState
 import com.nash.core.model.RecognitionConfig
-import com.nash.core.model.SessionTrustedPersonStore
 import com.nash.core.model.TrackId
 import com.nash.core.model.TrackedBox
 import com.nash.core.model.VerificationState
+import com.nash.engine.recognition.KeepVisibleOrchestrator
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -33,7 +33,7 @@ class KeepVisibleOrchestratorTest {
         mismatchesToRevoke = 2
     )
     private val state = KeepVisibleState()
-    private val store = SessionTrustedPersonStore(maxGallerySize = 5, duplicateSimilarity = 0.95f)
+    private val store = `SessionTrustedPersonStore.kt`(maxGallerySize = 5, duplicateSimilarity = 0.95f)
     private val recognizer = FakeRecognizer { null }
     private val orchestrator = KeepVisibleOrchestrator(recognizer, store, state, config)
 

@@ -1,9 +1,9 @@
 package com.nash.engine.impl.usecase
 
-import com.nash.engine.impl.keepvisible.KeepVisibleController
-import com.nash.core.model.KeepVisibleState
+import com.nash.core.model.KeepVisibleStateReader
 import com.nash.core.model.TrackId
 import com.nash.core.model.TrackVerification
+import com.nash.engine.api.keepvisible.KeepVisibleController
 import kotlinx.coroutines.flow.StateFlow
 import javax.inject.Inject
 
@@ -21,9 +21,12 @@ class RevokeAllKeepVisibleUseCase @Inject constructor(
     operator fun invoke() = controller.revokeAll()
 }
 
-/** Observes per-track verification for overlay states (pending/trusted/rejected). */
+/**
+ * Observes per-track verification for overlay states (pending/trusted/rejected).
+ * Read-only by type: the UI cannot mutate trust.
+ */
 class ObserveKeepVisibleStateUseCase @Inject constructor(
-    private val state: KeepVisibleState
+    private val state: KeepVisibleStateReader
 ) {
     operator fun invoke(): StateFlow<Map<TrackId, TrackVerification>> = state.verifications
 }

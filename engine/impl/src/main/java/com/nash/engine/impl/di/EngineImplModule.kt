@@ -5,18 +5,21 @@ import androidx.camera.core.ImageProxy
 import com.nash.core.model.AnonymizationModeHolder
 import com.nash.core.model.DetectorConfig
 import com.nash.core.model.FaceRecognizer
-import com.nash.core.model.KeepVisibleState
+import com.nash.core.model.KeepVisibleStateReader
+import com.nash.core.model.KeepVisibleStateStore
 import com.nash.core.model.OcSortConfig
 import com.nash.core.model.RecognitionConfig
 import com.nash.core.model.RenderBoxFeed
-import com.nash.core.model.SessionTrustedPersonStore
 import com.nash.core.model.TrackerConfig
 import com.nash.core.model.TrustedPersonStore
+import com.nash.engine.api.keepvisible.KeepVisibleController
+import com.nash.engine.api.keepvisible.KeepVisibleRecognizer
 import com.nash.engine.impl.DefaultAnonymizationPipeline
 import com.nash.engine.impl.factory.ImageProxyAnonymizationPipelineFactory
-import com.nash.engine.impl.keepvisible.KeepVisibleController
-import com.nash.engine.impl.keepvisible.KeepVisibleOrchestrator
 import com.nash.engine.ml.recognition.MobileFaceNetRecognizer
+import com.nash.engine.recognition.KeepVisibleOrchestrator
+import com.nash.engine.recognition.SessionKeepVisibleStateStore
+import com.nash.engine.recognition.SessionTrustedPersonStore
 import com.nash.engine.render.AnonymizationCameraEffect
 import com.nash.engine.render.AnonymizingSurfaceProcessor
 import dagger.Module
@@ -29,12 +32,17 @@ import javax.inject.Singleton
 @InstallIn(SingletonComponent::class)
 object EngineImplModule {
 
+    /**
+     * The single instance behind all three keep-visible seams. It is the only
+     * place in engine/impl that names the concrete orchestrator; everything
+     * else injects [KeepVisibleController] or [KeepVisibleRecognizer].
+     */
     @Provides
     @Singleton
     fun provideKeepVisibleOrchestrator(
         recognizer: @JvmSuppressWildcards FaceRecognizer<ImageProxy>,
         store: TrustedPersonStore,
-        state: KeepVisibleState,
+        state: KeepVisibleStateStore,
         config: RecognitionConfig
     ): KeepVisibleOrchestrator<ImageProxy> =
         KeepVisibleOrchestrator(recognizer, store, state, config)
@@ -44,6 +52,16 @@ object EngineImplModule {
     fun provideKeepVisibleController(
         orchestrator: KeepVisibleOrchestrator<ImageProxy>
     ): KeepVisibleController = orchestrator
+
+    /**
+     * [JvmSuppressWildcards] for the same reason as DetectorFactory: without it
+     * Dagger looks for `KeepVisibleRecognizer<? extends ImageProxy>`.
+     */
+    @Provides
+    @Singleton
+    fun provideKeepVisibleRecognizer(
+        orchestrator: KeepVisibleOrchestrator<ImageProxy>
+    ): @JvmSuppressWildcards KeepVisibleRecognizer<ImageProxy> = orchestrator
 
     /**
      * Construction and backend selection live in the factory (review fixes
@@ -98,9 +116,18 @@ object EngineImplModule {
             duplicateSimilarity = config.duplicateSimilarity
         )
 
+    /** Write side: injected only into the orchestrator. */
     @Provides
     @Singleton
-    fun provideKeepVisibleState(): KeepVisibleState = KeepVisibleState()
+    fun provideKeepVisibleStateStore(): KeepVisibleStateStore = SessionKeepVisibleStateStore()
+
+    /**
+     * Read side: the same instance, exposed as a handle that cannot promote a
+     * track to TRUSTED. This is what the render gate and the UI get.
+     */
+    @Provides
+    @Singleton
+    fun provideKeepVisibleStateReader(store: KeepVisibleStateStore): KeepVisibleStateReader = store
 
     @Provides
     @Singleton

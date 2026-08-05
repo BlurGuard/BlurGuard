@@ -16,7 +16,7 @@ import com.nash.core.model.RenderBoxFeed
 import com.nash.core.model.Tracker
 import com.nash.core.model.TrackerConfig
 import com.nash.core.model.TrustedPersonStore
-import com.nash.engine.impl.keepvisible.KeepVisibleOrchestrator
+import com.nash.engine.recognition.KeepVisibleOrchestrator
 import com.nash.engine.tracking.ByteTrackTracker
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse

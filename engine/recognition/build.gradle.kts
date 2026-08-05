@@ -16,6 +16,12 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
+
+    testOptions {
+        // The orchestrator logs through android.util.Log; JVM unit tests must
+        // not explode on the stubbed framework.
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {
@@ -23,15 +29,15 @@ dependencies {
     implementation(project(":core:model"))
     implementation(project(":core:common"))
 
-    // Identity policy only. No LiteRT/TFLite and no MediaPipe here: every model
-    // runtime dependency belongs to engine/ml, and this module must not be able
-    // to reach one by accident (review fix 15). It also does not depend on
-    // engine/ml — it reaches models through FaceRecognizer.
-    implementation(libs.camera.core)
-    implementation(libs.androidx.lifecycle.runtime.ktx)
+    // Identity policy only. No LiteRT/TFLite, no MediaPipe, and no dependency
+    // on engine/ml: models are reached through FaceRecognizer (review fix 15).
+    // camera-core and lifecycle-runtime were also dropped — nothing here is
+    // frame-type or lifecycle aware.
+    implementation(libs.coroutines.core)
 
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
 
     testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
 }

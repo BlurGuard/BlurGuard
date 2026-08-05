@@ -1,4 +1,8 @@
-package com.nash.core.model
+package com.nash.engine.recognition
+
+import com.nash.core.model.FaceEmbedding
+import com.nash.core.model.PersonId
+import com.nash.core.model.TrustedPersonStore
 
 /**
  * Session-only, in-memory [TrustedPersonStore]. Nothing ever touches disk, so
@@ -7,7 +11,9 @@ package com.nash.core.model
  *
  * Single-threaded by design: only ever touched from the ml dispatcher, matching
  * the tracker's threading model, and reached from the UI only through the
- * keep-visible controller. No internal locking.
+ * keep-visible controller. No internal locking. That contract is only
+ * reviewable now that this class sits next to the orchestrator that owns the ml
+ * thread, instead of in a leaf module anything could inject (review fix 16).
  */
 class SessionTrustedPersonStore(
     private val maxGallerySize: Int,
