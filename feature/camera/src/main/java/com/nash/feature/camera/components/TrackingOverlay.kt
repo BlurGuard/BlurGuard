@@ -10,12 +10,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import com.nash.core.model.DetectionClass
+import com.nash.core.designsystem.theme.BlurGuardSemanticColors
+import com.nash.core.designsystem.theme.LocalBlurGuardSemanticColors
 import com.nash.core.model.TrackId
 import com.nash.core.model.TrackVerification
 import com.nash.core.model.TrackedBox
-import com.nash.core.model.VerificationState
+import com.nash.feature.camera.R
 
 /**
  * Debug overlay drawing tracked boxes over the camera preview.
@@ -25,7 +28,9 @@ import com.nash.core.model.VerificationState
  * stays active in release builds while this overlay is debug-gated.
  *
  * Geometry comes from [BoxCoordinateMapper], the same mapper used for hit
- * testing, so drawing and tapping cannot drift.
+ * testing, so drawing and tapping cannot drift. Label text and stroke
+ * selection live in [TrackingOverlayLabelFormatter] and [TrackingOverlayStyle]
+ * (both pure Kotlin, unit-tested); this composable only draws.
  *
  * @param frameAspectRatio camera frame aspect as long-side / short-side
  * (16:9 for the current pipeline). Orientation is inferred from the canvas.
@@ -38,14 +43,23 @@ fun TrackingOverlay(
     frameAspectRatio: Float = 16f / 9f,
     debugIds: Boolean = false
 ) {
-    val textPaint = remember {
-        android.graphics.Paint().apply {
-            color = android.graphics.Color.WHITE
-            textSize = 36f
-            isAntiAlias = true
-            setShadowLayer(4f, 0f, 0f, android.graphics.Color.BLACK)
-        }
+    val colors = LocalBlurGuardSemanticColors.current
+    val style = remember { TrackingOverlayStyle() }
+
+    val facePrefix = stringResource(R.string.tracking_overlay_face_prefix)
+    val platePrefix = stringResource(R.string.tracking_overlay_plate_prefix)
+    val visibleLabel = stringResource(R.string.tracking_overlay_visible_label)
+    val verifyingLabel = stringResource(R.string.tracking_overlay_verifying_label)
+    val labelFormatter = remember(facePrefix, platePrefix, visibleLabel, verifyingLabel) {
+        TrackingOverlayLabelFormatter(
+            facePrefix = facePrefix,
+            platePrefix = platePrefix,
+            visibleLabel = visibleLabel,
+            verifyingLabel = verifyingLabel,
+        )
     }
+
+    val textPaint = remember(colors) { overlayTextPaint(colors) }
 
     Canvas(modifier = modifier) {
         val content = BoxCoordinateMapper.contentRect(size.width, size.height, frameAspectRatio)
@@ -53,13 +67,15 @@ fun TrackingOverlay(
         val strokeWidth = 3.dp.toPx()
         trackedBoxes.forEach { tracked ->
             val verification = verifications[tracked.id]
-            val color = when {
-                debugIds -> colorForId(tracked.id.value)
-                tracked.clazz == DetectionClass.LICENSE_PLATE -> Color.Yellow
-                verification?.state == VerificationState.TRUSTED -> Color.Green
-                verification?.state == VerificationState.PENDING -> Color(0xFFFFB300) // amber
-                verification?.state == VerificationState.REJECTED -> Color(0xFFE53935) // red
-                else -> Color.White.copy(alpha = 0.7f)
+            val color = when (val choice = style.strokeFor(tracked, verification, debugIds)) {
+                is StrokeChoice.Debug -> Color.hsv(choice.debugStroke.hue, 0.85f, 1f)
+                is StrokeChoice.Token -> when (choice.stroke) {
+                    BoxStroke.LICENSE_PLATE -> colors.licensePlateYellow
+                    BoxStroke.TRUSTED -> colors.trustedGreen
+                    BoxStroke.PENDING -> colors.pendingAmber
+                    BoxStroke.REJECTED -> colors.rejectedRed
+                    BoxStroke.NEUTRAL -> colors.neutralOverlayStroke
+                }
             }
 
             val box = tracked.box
@@ -75,12 +91,7 @@ fun TrackingOverlay(
                 style = Stroke(width = strokeWidth)
             )
 
-            val label = when {
-                debugIds -> "${if (tracked.clazz == DetectionClass.FACE) "F" else "P"}#${tracked.id.value}"
-                verification?.state == VerificationState.TRUSTED -> "✓ visible"
-                verification?.state == VerificationState.PENDING -> "verifying…"
-                else -> null
-            }
+            val label = labelFormatter.labelFor(tracked, verification, debugIds)
             if (label != null) {
                 drawIntoCanvas { canvas ->
                     val textY = (top - 10f).coerceAtLeast(textPaint.textSize)
@@ -91,7 +102,14 @@ fun TrackingOverlay(
     }
 }
 
-private fun colorForId(id: Long): Color {
-    val hue = ((id * 137.508) % 360.0).toFloat()
-    return Color.hsv(hue, 0.85f, 1f)
-}
+/**
+ * Label paint built from design-system tokens. Identical values to the
+ * pre-extraction hardcoded paint (white text, black shadow, 36px).
+ */
+private fun overlayTextPaint(colors: BlurGuardSemanticColors): android.graphics.Paint =
+    android.graphics.Paint().apply {
+        color = colors.overlayText.toArgb()
+        textSize = 36f
+        isAntiAlias = true
+        setShadowLayer(4f, 0f, 0f, colors.overlayTextShadow.toArgb())
+    }
