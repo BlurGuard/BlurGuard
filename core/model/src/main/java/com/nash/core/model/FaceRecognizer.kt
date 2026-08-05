@@ -3,9 +3,15 @@ package com.nash.core.model
 /**
  * Contract for on-device face embedding extraction.
  *
- * Implementations live in core/recognition (Phase 3). Alignment (landmarks,
- * 112x112 warp) and quality gates are implementation details behind this
- * interface — see the FaceAligner / LandmarkSource seam.
+ * Implementations live in engine/ml, which owns every TFLite/LiteRT and MediaPipe model
+ * wrapper (`MobileFaceNetRecognizer`). Alignment (landmarks, 112x112 warp) and quality
+ * gates are implementation details behind this interface — see the FaceAligner /
+ * SimilarityTransform seam in that module.
+ *
+ * Module ownership: engine/ml runs the models (where a face is, what its embedding is);
+ * engine/recognition decides identity and trust (who it is, whether the box may be
+ * unblurred, how often to re-check) and reaches models only through this interface and
+ * [TrustedPersonStore]. engine/impl injects the concrete implementation.
  *
  * @param F The frame type, kept generic so core/model stays a leaf module
  * (e.g. ImageProxy in CameraX implementations), mirroring [Detector].

@@ -2,10 +2,12 @@ package com.nash.core.model
 
 /**
  * Session-only, in-memory [TrustedPersonStore]. Nothing ever touches disk, so
- * trust dies with the process — the strictest reading of invariant #6.
+ * trust dies with the process — the strictest reading of invariant #8
+ * (embedding safety).
  *
- * Single-threaded by design: only ever touched from the ml dispatcher,
- * matching the tracker's threading model. No internal locking.
+ * Single-threaded by design: only ever touched from the ml dispatcher, matching
+ * the tracker's threading model, and reached from the UI only through the
+ * keep-visible controller. No internal locking.
  */
 class SessionTrustedPersonStore(
     private val maxGallerySize: Int,
