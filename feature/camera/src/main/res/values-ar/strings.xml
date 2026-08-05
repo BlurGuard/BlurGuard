@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="keep_visible_revoke_all">إعادة تمويه الكل</string>
+    <string name="keep_visible_trusted">تم التحقق من الوجه — سيُترك ظاهرًا</string>
+    <string name="keep_visible_rejected">تعذّر التعرّف على الوجه — أُعيد تمويهه</string>
+
+    <!-- Camera screen -->
+    <string name="camera_permission_message">يلزم الوصول إلى الكاميرا والميكروفون لتسجيل الفيديو.</string>
+    <string name="camera_grant_permissions">منح الأذونات</string>
+    <string name="camera_saved_video">تم الحفظ: %1$s</string>
+    <string name="camera_recording_indicator">● تسجيل %1$s</string>
+    <string name="camera_record_button_label">تسجيل</string>
+    <string name="camera_permission_required">إذن الكاميرا مطلوب لتسجيل الفيديو.</string>
+
+    <!-- Engine warnings -->
+    <string name="warning_ml_init_failed">تعذّر بدء الكشف. قد لا يتم تمويه الوجوه واللوحات.</string>
+    <string name="warning_high_latency">الكشف يعمل ببطء — قد يتأخر التمويه عن الفيديو.</string>
+    <string name="warning_storage_low">مساحة التخزين شبه ممتلئة. قد يفشل التسجيل.</string>
+    <string name="warning_camera_timed_out">توقفت الكاميرا عن الاستجابة. جرّب إعادة تشغيل التطبيق.</string>
+    <string name="warning_detection_degraded">تدهور الكشف — قد تبقى بعض العناصر ظاهرة مؤقتًا.</string>
+
+    <!-- tracking_overlay_face_prefix / tracking_overlay_plate_prefix intentionally
+         omitted: translatable=false, developer-facing debug labels stay "F"/"P". -->
+    <string name="tracking_overlay_visible_label">✓ مرئي</string>
+    <string name="tracking_overlay_verifying_label">جارٍ التحقق…</string>
+</resources>

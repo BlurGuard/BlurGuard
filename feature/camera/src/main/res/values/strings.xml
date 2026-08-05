@@ -3,4 +3,25 @@
     <string name="keep_visible_revoke_all">Re-blur all</string>
     <string name="keep_visible_trusted">Face verified — kept visible</string>
     <string name="keep_visible_rejected">Face not recognized — re-blurred</string>
+
+    <!-- Camera screen -->
+    <string name="camera_permission_message">Camera and microphone access are needed to record video.</string>
+    <string name="camera_grant_permissions">Grant permissions</string>
+    <string name="camera_saved_video">Saved: %1$s</string>
+    <string name="camera_recording_indicator">● REC %1$s</string>
+    <string name="camera_record_button_label">REC</string>
+    <string name="camera_permission_required">Camera permission is required to record video.</string>
+
+    <!-- Engine warnings -->
+    <string name="warning_ml_init_failed">Detection could not start. Faces and plates may not be anonymized.</string>
+    <string name="warning_high_latency">Detection is running slowly — anonymization may lag behind the video.</string>
+    <string name="warning_storage_low">Storage is almost full. Recording may fail.</string>
+    <string name="warning_camera_timed_out">The camera stopped responding. Try restarting the app.</string>
+    <string name="warning_detection_degraded">Detection degraded — objects in frame may be temporarily visible.</string>
+
+    <!-- Tracking overlay (debug prefixes are developer-facing; keep them Latin in all locales) -->
+    <string name="tracking_overlay_face_prefix" translatable="false">F</string>
+    <string name="tracking_overlay_plate_prefix" translatable="false">P</string>
+    <string name="tracking_overlay_visible_label">✓ visible</string>
+    <string name="tracking_overlay_verifying_label">verifying…</string>
 </resources>
