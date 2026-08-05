@@ -23,9 +23,11 @@ dependencies {
     implementation(project(":core:model"))
     implementation(project(":core:common"))
 
+    // Identity policy only. No LiteRT/TFLite and no MediaPipe here: every model
+    // runtime dependency belongs to engine/ml, and this module must not be able
+    // to reach one by accident (review fix 15). It also does not depend on
+    // engine/ml — it reaches models through FaceRecognizer.
     implementation(libs.camera.core)
-    implementation(libs.litert)
-    implementation(libs.mediapipe.tasks.vision)
     implementation(libs.androidx.lifecycle.runtime.ktx)
 
     implementation(libs.hilt.android)

@@ -16,7 +16,7 @@ import com.nash.engine.impl.DefaultAnonymizationPipeline
 import com.nash.engine.impl.factory.ImageProxyAnonymizationPipelineFactory
 import com.nash.engine.impl.keepvisible.KeepVisibleController
 import com.nash.engine.impl.keepvisible.KeepVisibleOrchestrator
-import com.nash.engine.recognition.MobileFaceNetRecognizer
+import com.nash.engine.ml.recognition.MobileFaceNetRecognizer
 import com.nash.engine.render.AnonymizationCameraEffect
 import com.nash.engine.render.AnonymizingSurfaceProcessor
 import dagger.Module
@@ -80,6 +80,10 @@ object EngineImplModule {
     @Singleton
     fun provideOcSortConfig(): OcSortConfig = OcSortConfig()
 
+    /**
+     * Embedding extraction is an engine/ml concern; identity policy consumes it
+     * only through [FaceRecognizer] (review fix 15).
+     */
     @Provides
     @Singleton
     fun provideFaceRecognizer(
