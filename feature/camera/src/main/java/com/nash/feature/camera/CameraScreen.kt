@@ -36,6 +36,7 @@ import com.nash.feature.camera.components.ModeChip
 import com.nash.feature.camera.components.PipelineDebugHud
 import com.nash.feature.camera.components.TrackingOverlay
 import androidx.compose.ui.platform.LocalContext
+import com.nash.feature.camera.components.FaceTapTargets
 
 /**
  * Camera recording screen.
@@ -86,14 +87,24 @@ fun CameraScreen(
                     modifier = Modifier.fillMaxSize()
                 )
 
+                // Single tap owner: always active (keep-visible enrollment is a
+                // release feature) and renders nothing. Shares the preview's
+                // exact bounds so tap coordinates line up. Controls and chips
+                // are placed later in this Box, so they hit-test above it and
+                // stay clickable.
+                FaceTapTargets(
+                    trackedBoxes = state.trackedBoxes,
+                    onFaceTapped = actions.onFaceTapped,
+                    modifier = Modifier.fillMaxSize()
+                )
+
                 if (showDebugOverlays) {
-                    // Debug overlay: must sit directly on top of the preview and
-                    // share its exact bounds so normalized coords line up.
+                    // Purely visual debug overlay — no pointer handling, so taps
+                    // pass through it to FaceTapTargets underneath.
                     TrackingOverlay(
                         trackedBoxes = state.trackedBoxes,
-                        modifier = Modifier.fillMaxSize(),
                         verifications = state.keepVisible,
-                        onFaceTapped = actions.onFaceTapped,
+                        modifier = Modifier.fillMaxSize()
                     )
                     PipelineDebugHud(
                         stats = state.stats,
