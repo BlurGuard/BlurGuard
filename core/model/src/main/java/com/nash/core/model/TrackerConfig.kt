@@ -5,6 +5,9 @@ package com.nash.core.model
  *
  * Framework-free; bound in the app DI module.
  *
+ * @property backend Selects the tracker implementation. Default BYTE_TRACK so
+ * runtime behavior is unchanged; OC_SORT stays behind the same [Tracker]
+ * interface. The enum lives with [OcSortConfig] in this package.
  * @property highScoreThreshold Detections at/above this score drive matching and
  * may spawn new tracks (ByteTrack "first association").
  * @property lowScoreThreshold Detections between this and [highScoreThreshold]
@@ -18,6 +21,7 @@ package com.nash.core.model
  * motion model (0 = use only the newest velocity, closer to 1 = smoother).
  */
 data class TrackerConfig(
+    val backend: TrackerBackend = TrackerBackend.BYTE_TRACK,
     val highScoreThreshold: Float = 0.45f,
     val lowScoreThreshold: Float = 0.1f,
     val iouThreshold: Float = 0.1f,
