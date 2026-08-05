@@ -1,7 +1,6 @@
 package com.nash.engine.ml
 
 import android.content.Context
-import android.os.SystemClock
 import androidx.camera.core.ImageProxy
 import com.nash.core.common.DispatcherProvider
 import com.nash.core.model.DetectionBox
@@ -26,23 +25,14 @@ import org.tensorflow.lite.Interpreter
  *
  * Collaborators: [TfliteInterpreterFactory] owns runtime creation and delegate
  * lifecycle, [YoloPreprocessor] owns frame -> tensor conversion,
- * [YoloOutputDecoder] owns raw-tensor decoding.
+ * [YoloOutputDecoder] owns raw-tensor decoding, [DetectorDiagnostics] owns
+ * split timings and throttled debug logging.
  */
 class YoloDetector @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val dispatcherProvider: DispatcherProvider,
     private val config: DetectorConfig
 ) : Detector<ImageProxy> {
-
-    // --- Split-timing probes (debug). EMA-smoothed, logged once per second.
-    private var emaPreprocessMs = 0.0
-    private var emaInferenceMs = 0.0
-    private var emaDecodeMs = 0.0
-    private var timedFrames = 0L
-    private var lastLogUptimeMs = 0L
-
-    private fun updateEma(current: Double, sample: Double): Double =
-        if (timedFrames == 0L) sample else current * 0.9 + sample * 0.1
 
     /** Lazy so the model load happens on first use (ml dispatcher), not at DI time. */
     private val runtime: TfliteRuntime by lazy {
@@ -54,6 +44,14 @@ class YoloDetector @Inject constructor(
     }
 
     private val interpreter: Interpreter get() = runtime.interpreter
+
+    private val diagnostics = DetectorDiagnostics(
+        enabled = context.isDebugBuild(),
+        tag = TAG,
+        // Only evaluated inside the once-per-second log branch, so touching
+        // the lazy runtime here costs nothing on the hot path.
+        backendLabel = { if (runtime.isAccelerated) "nnapi" else "cpu" }
+    )
 
     /** Lazy: the layout flag can only be read once the interpreter exists. */
     private val preprocessor: YoloPreprocessor by lazy {
@@ -78,26 +76,15 @@ class YoloDetector @Inject constructor(
         metadata: FrameMetadata
     ): List<DetectionBox> = withContext(dispatcherProvider.ml) {
 
-        val t0 = SystemClock.elapsedRealtimeNanos()
+        val frameStart = diagnostics.mark()
         val letterbox = preprocessor.process(frame)
-        val t1 = SystemClock.elapsedRealtimeNanos()
+        val preprocessEnd = diagnostics.mark()
 
         // --- Inference.
         val outputShape = interpreter.getOutputTensor(0).shape()
         val output = Array(outputShape[1]) { FloatArray(outputShape[2]) }
         interpreter.run(preprocessor.inputBuffer, arrayOf(output))
-
-        // TODO(step 3): dead scan, removed together with DetectorDiagnostics.
-        var maxScore = 0f
-        var maxCoord = 0f
-        for (c in output.indices) {
-            val row = output[c]
-            for (v in row) {
-                if (c < 4) { if (v > maxCoord) maxCoord = v }
-                else { if (v > maxScore) maxScore = v }
-            }
-        }
-        val t2 = SystemClock.elapsedRealtimeNanos()
+        val inferenceEnd = diagnostics.mark()
 
         // --- Decode in buffer space, then rotate to upright space.
         val result = decoder.decode(
@@ -106,16 +93,9 @@ class YoloDetector @Inject constructor(
         ).map { detection ->
             detection.copy(box = detection.box.rotatedToUpright(metadata.rotationDegrees))
         }
-        val t3 = SystemClock.elapsedRealtimeNanos()
-        emaPreprocessMs = updateEma(emaPreprocessMs, (t1 - t0) / 1e6)
-        emaInferenceMs = updateEma(emaInferenceMs, (t2 - t1) / 1e6)
-        emaDecodeMs = updateEma(emaDecodeMs, (t3 - t2) / 1e6)
-        timedFrames++
+        val decodeEnd = diagnostics.mark()
 
-        val nowMs = SystemClock.uptimeMillis()
-        if (nowMs - lastLogUptimeMs >= 1_000L) {
-            lastLogUptimeMs = nowMs
-        }
+        diagnostics.record(frameStart, preprocessEnd, inferenceEnd, decodeEnd)
         result
     }
 
@@ -124,6 +104,7 @@ class YoloDetector @Inject constructor(
     }
 
     private companion object {
+        const val TAG = "YoloDetector"
         const val MODEL_ASSET = "best_int8_320.tflite"
         const val INPUT_SIZE = 320
 
