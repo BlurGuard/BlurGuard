@@ -24,12 +24,9 @@ import javax.inject.Singleton
  * MobileFaceNet embedding extractor: upright frame -> dilated crop -> BlazeFace
  * landmark alignment (FaceAligner) -> 112x112 -> embedding -> L2 normalize.
  *
- * Lives in engine/ml with every other on-device model wrapper. Identity policy
- * — matching, trust, re-verification cadence — belongs to engine/recognition
- * and reaches this class only through [FaceRecognizer].
- *
- * CPU/XNNPACK, 2 threads: the GPU stays dedicated to the anonymization
- * renderer (NFR-02). Runs sporadically on the ml dispatcher, never per frame.
+ * CPU/XNNPACK, 2 threads — same accelerator policy as YoloDetector (GPU stays
+ * dedicated to the anonymization renderer). Runs sporadically on the ml
+ * dispatcher, never per frame; KeepVisibleOrchestrator bounds how often.
  */
 @Singleton
 class MobileFaceNetRecognizer @Inject constructor(
@@ -38,11 +35,10 @@ class MobileFaceNetRecognizer @Inject constructor(
     private val config: RecognitionConfig
 ) : FaceRecognizer<ImageProxy> {
 
-    /**
-     * Debug-only logging switch, same source of truth as the detector's
-     * diagnostics. Release builds never build a model-spec log string.
-     */
-    private val debugLogging: Boolean = context.isDebugBuild()
+    /** Debug builds only: model-spec logging and split timings. */
+    private val debug = context.isDebugBuild()
+
+    private val diagnostics = RecognizerDiagnostics(enabled = debug, tag = TAG)
 
     private val aligner by lazy { FaceAligner(context, config) }
 
@@ -56,14 +52,11 @@ class MobileFaceNetRecognizer @Inject constructor(
             Interpreter.Options().setNumThreads(NUM_THREADS)
         )
 
-        if (debugLogging) {
-            Log.i(
-                TAG,
-                "model spec: input=${tempInterpreter.getInputTensor(0).shape().contentToString()} " +
-                        "${tempInterpreter.getInputTensor(0).dataType()} " +
-                        "output=${tempInterpreter.getOutputTensor(0).shape().contentToString()} " +
-                        "${tempInterpreter.getOutputTensor(0).dataType()}"
-            )
+        if (debug) {
+            Log.i(TAG, "model spec: input=${tempInterpreter.getInputTensor(0).shape().contentToString()} " +
+                    "${tempInterpreter.getInputTensor(0).dataType()} " +
+                    "output=${tempInterpreter.getOutputTensor(0).shape().contentToString()} " +
+                    "${tempInterpreter.getOutputTensor(0).dataType()}")
         }
 
         tempInterpreter
@@ -74,19 +67,13 @@ class MobileFaceNetRecognizer @Inject constructor(
         // output shape — some converted models report 0/dynamic dims until then.
         interpreter.resizeInput(0, intArrayOf(1, INPUT_SIZE, INPUT_SIZE, 3))
         interpreter.allocateTensors()
+        val inShape = interpreter.getInputTensor(0).shape()
         val outShape = interpreter.getOutputTensor(0).shape()
-
-        if (debugLogging) {
-            Log.i(
-                TAG,
-                "model spec (allocated): " +
-                        "input=${interpreter.getInputTensor(0).shape().contentToString()} " +
-                        "${interpreter.getInputTensor(0).dataType()} " +
-                        "output=${outShape.contentToString()} " +
-                        "${interpreter.getOutputTensor(0).dataType()}"
-            )
+        if (debug) {
+            Log.i(TAG, "model spec (allocated): input=${inShape.contentToString()} " +
+                    "${interpreter.getInputTensor(0).dataType()} " +
+                    "output=${outShape.contentToString()} ${interpreter.getOutputTensor(0).dataType()}")
         }
-
         val size = outShape.last()
         require(size > 0) { "Unusable output shape ${outShape.contentToString()}" }
         size
@@ -102,9 +89,15 @@ class MobileFaceNetRecognizer @Inject constructor(
         faceBox: BoundingBox,
         metadata: FrameMetadata
     ): FaceEmbedding? = withContext(dispatcherProvider.ml) {
+        val t0 = diagnostics.mark()
+
         // 1) Upright bitmap. faceBox is in upright normalized space, so rotate
         //    the buffer first and crop with no coordinate gymnastics.
-        val upright = frame.toBitmap().rotatedToUpright(metadata.rotationDegrees)
+        val source = frame.toBitmap()
+        val tBitmap = diagnostics.mark()
+
+        val upright = source.rotatedToUpright(metadata.rotationDegrees)
+        val tRotate = diagnostics.mark()
 
         // 2) Dilated crop (margin gives the landmark model context), clamped.
         val margin = CROP_DILATION
@@ -117,9 +110,15 @@ class MobileFaceNetRecognizer @Inject constructor(
         val bottom = ((faceBox.bottom + margin * height(faceBox)) * upright.height).toInt()
             .coerceIn(top + 1, upright.height)
         val crop = Bitmap.createBitmap(upright, left, top, right - left, bottom - top)
+        val tCrop = diagnostics.mark()
 
         // 3) Landmark alignment. Null = quality gate failed = no decision.
-        val aligned = aligner.align(crop) ?: return@withContext null
+        val aligned = aligner.align(crop)
+        if (aligned == null) {
+            diagnostics.recordSkip()
+            return@withContext null
+        }
+        val tAlign = diagnostics.mark()
 
         // 4) Preprocess: MobileFaceNet convention (x - 127.5) / 127.5, NHWC RGB.
         aligned.getPixels(pixels, 0, INPUT_SIZE, 0, 0, INPUT_SIZE, INPUT_SIZE)
@@ -136,8 +135,12 @@ class MobileFaceNetRecognizer @Inject constructor(
             interpreter.run(inputBuffer, output)
         } catch (e: Exception) {
             Log.e(TAG, "inference failed", e)
+            diagnostics.recordSkip()
             return@withContext null
         }
+        val tInfer = diagnostics.mark()
+
+        diagnostics.record(t0, tBitmap, tRotate, tCrop, tAlign, tInfer)
 
         // 5) L2 normalize; degenerate vectors become null (fail-closed).
         FaceEmbedding.fromRaw(output[0])
