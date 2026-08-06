@@ -1,22 +1,17 @@
 package com.nash.engine.impl.factory
 
 import androidx.camera.core.ImageProxy
-import com.nash.core.model.BoundingBox
 import com.nash.core.model.DetectionBox
 import com.nash.core.model.Detector
 import com.nash.core.model.DetectorConfig
-import com.nash.core.model.FaceEmbedding
-import com.nash.core.model.FaceRecognizer
 import com.nash.core.model.FrameMetadata
-import com.nash.core.model.KeepVisibleState
-import com.nash.core.model.PersonId
 import com.nash.core.model.PipelineStats
-import com.nash.core.model.RecognitionConfig
 import com.nash.core.model.RenderBoxFeed
+import com.nash.core.model.TrackedBox
 import com.nash.core.model.Tracker
 import com.nash.core.model.TrackerConfig
-import com.nash.core.model.TrustedPersonStore
-import com.nash.engine.recognition.KeepVisibleOrchestrator
+import com.nash.engine.api.keepvisible.KeepVisibleRecognizer
+import com.nash.engine.impl.pipeline.FakeKeepVisibleState
 import com.nash.engine.tracking.ByteTrackTracker
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -29,6 +24,10 @@ import org.junit.Test
  * configs flow to the right sub-factories, and the produced pipeline is
  * usable with clean initial state. Real stages are used (they are cheap);
  * only the Android-bound seams are faked.
+ *
+ * The factory now takes the [KeepVisibleRecognizer] abstraction, so this test
+ * no longer has to assemble a real orchestrator with a recognizer, a trusted
+ * store and a config just to check that configs are forwarded.
  */
 class ImageProxyAnonymizationPipelineFactoryTest {
 
@@ -61,23 +60,15 @@ class ImageProxyAnonymizationPipelineFactoryTest {
         }
     }
 
-    private class FakeRecognizer : FaceRecognizer<ImageProxy> {
-        override suspend fun embed(
+    /** Recognition is not exercised here; the pipeline only needs the seam. */
+    private class NoopKeepVisibleRecognizer : KeepVisibleRecognizer<ImageProxy> {
+        override suspend fun onDetectionFrame(
             frame: ImageProxy,
-            faceBox: BoundingBox,
-            metadata: FrameMetadata
-        ): FaceEmbedding? = null
+            metadata: FrameMetadata,
+            boxes: List<TrackedBox>
+        ) = Unit
 
-        override fun close() = Unit
-    }
-
-    private class FakeTrustedPersonStore : TrustedPersonStore {
-        override fun enroll(embedding: FaceEmbedding): PersonId = error("not used")
-        override fun addToGallery(personId: PersonId, embedding: FaceEmbedding): Boolean = false
-        override fun bestMatch(embedding: FaceEmbedding): TrustedPersonStore.Match? = null
-        override fun revoke(personId: PersonId) = Unit
-        override fun revokeAll() = Unit
-        override val trustedPersonCount: Int get() = 0
+        override fun onSessionReset() = Unit
     }
 
     private val detectorConfig = DetectorConfig()
@@ -86,24 +77,16 @@ class ImageProxyAnonymizationPipelineFactoryTest {
     private fun newFactory(
         detectorFactory: FakeDetectorFactory,
         trackerFactory: FakeTrackerFactory,
-    ): ImageProxyAnonymizationPipelineFactory {
-        val keepVisibleState = KeepVisibleState()
-        val orchestrator = KeepVisibleOrchestrator(
-            recognizer = FakeRecognizer(),
-            store = FakeTrustedPersonStore(),
-            state = keepVisibleState,
-            config = RecognitionConfig(),
-        )
-        return ImageProxyAnonymizationPipelineFactory(
+    ): ImageProxyAnonymizationPipelineFactory =
+        ImageProxyAnonymizationPipelineFactory(
             detectorFactory = detectorFactory,
             trackerFactory = trackerFactory,
             detectorConfig = detectorConfig,
             trackerConfig = trackerConfig,
             renderBoxFeed = RenderBoxFeed(),
-            keepVisibleOrchestrator = orchestrator,
-            keepVisibleState = keepVisibleState,
+            keepVisibleRecognizer = NoopKeepVisibleRecognizer(),
+            keepVisibleState = FakeKeepVisibleState(),
         )
-    }
 
     @Test
     fun `create passes the injected detector config to the detector factory`() {

@@ -2,81 +2,102 @@ package com.nash.core.model
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/**
+ * Contracts owned by core/model: embedding construction and THE render gate.
+ *
+ * Deliberately store-free. The trust *decision* and its mutable state live in
+ * engine/recognition and are tested there (review fix 16); what stays here is
+ * immutable data plus the pure rule that decides which boxes may go unblurred.
+ */
 class RecognitionContractsTest {
 
     private fun embedding(vararg v: Float) = FaceEmbedding.fromRaw(floatArrayOf(*v))!!
-
-    private fun store() = SessionTrustedPersonStore(maxGallerySize = 3, duplicateSimilarity = 0.95f)
 
     @Test
     fun `degenerate raw vectors are rejected`() {
         assertNull(FaceEmbedding.fromRaw(floatArrayOf(0f, 0f, 0f)))
         assertNull(FaceEmbedding.fromRaw(floatArrayOf(1f, Float.NaN, 0f)))
+        assertNull(FaceEmbedding.fromRaw(floatArrayOf(1f, Float.POSITIVE_INFINITY, 0f)))
     }
 
     @Test
-    fun `best match finds the enrolled person with max cosine`() {
-        val s = store()
-        val alice = s.enroll(embedding(1f, 0f, 0f))
-        s.enroll(embedding(0f, 1f, 0f)) // someone else
-        val probe = embedding(0.9f, 0.1f, 0f) // close to alice
-        val match = s.bestMatch(probe)!!
-        assertEquals(alice, match.personId)
-        assertTrue(match.similarity > 0.9f)
+    fun `embeddings are L2 normalized so cosine ignores magnitude`() {
+        // Same direction, very different magnitudes.
+        assertEquals(1f, embedding(2f, 0f, 0f).cosineSimilarity(embedding(500f, 0f, 0f)), 1e-4f)
+        assertEquals(0f, embedding(1f, 0f, 0f).cosineSimilarity(embedding(0f, 1f, 0f)), 1e-4f)
+        assertEquals(-1f, embedding(1f, 0f, 0f).cosineSimilarity(embedding(-3f, 0f, 0f)), 1e-4f)
     }
 
     @Test
-    fun `gallery rejects near duplicates and respects the cap`() {
-        val s = store()
-        val id = s.enroll(embedding(1f, 0f, 0f))
-        assertFalse("near-duplicate must be rejected", s.addToGallery(id, embedding(0.99f, 0.01f, 0f)))
-        assertTrue(s.addToGallery(id, embedding(0.6f, 0.8f, 0f)))
-        assertTrue(s.addToGallery(id, embedding(0f, 0.6f, 0.8f)))
-        assertFalse("cap of 3 reached", s.addToGallery(id, embedding(0.8f, 0f, 0.6f)))
-    }
+    fun `default verification is unknown, which means blurred`() {
+        val default = TrackVerification()
 
-    @Test
-    fun `revokeAll empties the store`() {
-        val s = store()
-        s.enroll(embedding(1f, 0f, 0f))
-        s.revokeAll()
-        assertEquals(0, s.trustedPersonCount)
-        assertNull(s.bestMatch(embedding(1f, 0f, 0f)))
+        assertEquals(VerificationState.UNKNOWN, default.state)
+        assertNull(default.personId)
+        assertEquals(0, default.consecutiveMatches)
+        assertEquals(0, default.consecutiveMismatches)
+        assertEquals(-1L, default.lastCheckedFrame)
     }
 
     @Test
     fun `decorate unblurs only TRUSTED faces`() {
-        val state = KeepVisibleState()
         val trustedFace = box(1, DetectionClass.FACE)
         val pendingFace = box(2, DetectionClass.FACE)
-        val plate = box(3, DetectionClass.LICENSE_PLATE)
+        val rejectedFace = box(3, DetectionClass.FACE)
+        val unknownFace = box(4, DetectionClass.FACE)
+        val verifications = mapOf(
+            TrackId(1) to TrackVerification(VerificationState.TRUSTED, PersonId(1)),
+            TrackId(2) to TrackVerification(VerificationState.PENDING, PersonId(1)),
+            TrackId(3) to TrackVerification(VerificationState.REJECTED, PersonId(1)),
+            // Track 4 deliberately absent: absent must behave as UNKNOWN.
+        )
 
-        state.set(TrackId(1), TrackVerification(VerificationState.TRUSTED, PersonId(1)))
-        state.set(TrackId(2), TrackVerification(VerificationState.PENDING))
-        // Plate deliberately marked TRUSTED to prove the class gate holds:
-        state.set(TrackId(3), TrackVerification(VerificationState.TRUSTED, PersonId(1)))
+        val out = verifications.decorate(
+            listOf(trustedFace, pendingFace, rejectedFace, unknownFace)
+        )
 
-        val out = state.decorate(listOf(trustedFace, pendingFace, plate))
-        assertTrue(out[0].keepVisible)
-        assertFalse(out[1].keepVisible)
-        assertFalse("plates must never be keep-visible", out[2].keepVisible)
+        assertEquals(listOf(true, false, false, false), out.map { it.keepVisible })
     }
 
     @Test
-    fun `retainTracks drops dead tracks and clearAll reblurs everything`() {
-        val state = KeepVisibleState()
-        state.set(TrackId(1), TrackVerification(VerificationState.TRUSTED, PersonId(1)))
-        state.set(TrackId(2), TrackVerification(VerificationState.REJECTED))
-        state.retainTracks(setOf(TrackId(1)))
-        assertEquals(VerificationState.UNKNOWN, state.of(TrackId(2)).state)
-        assertNotNull(state.of(TrackId(1)).personId)
-        state.clearAll()
-        assertFalse(state.decorate(listOf(box(1, DetectionClass.FACE))).single().keepVisible)
+    fun `plates are never keep-visible even when marked TRUSTED`() {
+        val plate = box(1, DetectionClass.LICENSE_PLATE)
+        // Corrupt state on purpose to prove the class gate holds on its own.
+        val verifications = mapOf(
+            TrackId(1) to TrackVerification(VerificationState.TRUSTED, PersonId(1))
+        )
+
+        assertFalse(
+            "plates must never be keep-visible",
+            verifications.decorate(listOf(plate)).single().keepVisible
+        )
+    }
+
+    @Test
+    fun `an empty verification map leaves every box blurred`() {
+        val boxes = listOf(box(1, DetectionClass.FACE), box(2, DetectionClass.LICENSE_PLATE))
+
+        val out = emptyMap<TrackId, TrackVerification>().decorate(boxes)
+
+        assertTrue("no state means nothing to unblur", out.none { it.keepVisible })
+        assertTrue("nothing to do, so no copies", out === boxes)
+    }
+
+    @Test
+    fun `decorate does not mutate its inputs`() {
+        val face = box(1, DetectionClass.FACE)
+        val verifications = mapOf(
+            TrackId(1) to TrackVerification(VerificationState.TRUSTED, PersonId(1))
+        )
+
+        val out = verifications.decorate(listOf(face))
+
+        assertTrue(out.single().keepVisible)
+        assertFalse("the input box must be untouched", face.keepVisible)
     }
 
     private fun box(id: Long, clazz: DetectionClass) = TrackedBox(

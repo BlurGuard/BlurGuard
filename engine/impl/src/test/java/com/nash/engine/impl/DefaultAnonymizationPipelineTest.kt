@@ -1,12 +1,12 @@
 package com.nash.engine.impl
 
-import com.nash.core.model.KeepVisibleState
 import com.nash.core.model.RenderBoxFeed
 import com.nash.engine.impl.pipeline.DetectionRunner
 import com.nash.engine.impl.pipeline.DetectionScheduler
 import com.nash.engine.impl.pipeline.FakeClock
 import com.nash.engine.impl.pipeline.FakeDetector
 import com.nash.engine.impl.pipeline.FakeKeepVisibleRecognizer
+import com.nash.engine.impl.pipeline.FakeKeepVisibleState
 import com.nash.engine.impl.pipeline.FakeTracker
 import com.nash.engine.impl.pipeline.KeepVisibleStage
 import com.nash.engine.impl.pipeline.PipelineStatsCollector
@@ -42,7 +42,7 @@ class DefaultAnonymizationPipelineTest {
         val detector = FakeDetector(listOf(detection()), detectorError)
         val tracker = FakeTracker(updateBoxes, predictBoxes)
         val recognizer = FakeKeepVisibleRecognizer()
-        val keepVisibleState = KeepVisibleState()
+        val keepVisibleState = FakeKeepVisibleState()
         val publisher = TrackedBoxPublisher(feed)
         val statsCollector = PipelineStatsCollector(clock)
 
