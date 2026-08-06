@@ -5,10 +5,17 @@ import com.nash.core.model.DetectionBox
 import com.nash.core.model.DetectionClass
 import com.nash.core.model.Detector
 import com.nash.core.model.FrameMetadata
+import com.nash.core.model.KeepVisibleStateStore
+import com.nash.core.model.PersonId
 import com.nash.core.model.TrackId
+import com.nash.core.model.TrackVerification
 import com.nash.core.model.TrackedBox
 import com.nash.core.model.Tracker
-import com.nash.engine.impl.keepvisible.KeepVisibleRecognizer
+import com.nash.core.model.VerificationState
+import com.nash.engine.api.keepvisible.KeepVisibleRecognizer
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /** Frames are just strings in tests — the pipeline never inspects them. */
 internal typealias TestFrame = String
@@ -119,6 +126,48 @@ internal class FakeKeepVisibleRecognizer : KeepVisibleRecognizer<TestFrame> {
     }
 
     override fun onSessionReset() { sessionResets++ }
+}
+
+/**
+ * Verification-state stub. Keeps engine/impl's tests independent of
+ * engine/recognition's real store: the pipeline only needs *some* state to
+ * read, and these tests are about cadence and publishing, not trust policy.
+ *
+ * Records retain/clear traffic so pipeline tests can assert on it, and exposes
+ * [trust] so the render gate can be driven directly.
+ */
+internal class FakeKeepVisibleState : KeepVisibleStateStore {
+
+    private val _verifications = MutableStateFlow<Map<TrackId, TrackVerification>>(emptyMap())
+    override val verifications: StateFlow<Map<TrackId, TrackVerification>> =
+        _verifications.asStateFlow()
+
+    val retainedTrackIds = mutableListOf<Set<TrackId>>()
+    var clearAllCount = 0
+        private set
+
+    override fun of(trackId: TrackId): TrackVerification =
+        _verifications.value[trackId] ?: TrackVerification()
+
+    override fun set(trackId: TrackId, verification: TrackVerification) {
+        _verifications.value = _verifications.value + (trackId to verification)
+    }
+
+    override fun retainTracks(liveTrackIds: Set<TrackId>) {
+        retainedTrackIds += liveTrackIds
+        _verifications.value = _verifications.value.filterKeys { it in liveTrackIds }
+    }
+
+    override fun clearAll() {
+        clearAllCount++
+        _verifications.value = emptyMap()
+    }
+
+    /** Marks a track TRUSTED, i.e. the one state the render gate unblurs. */
+    fun trust(trackId: TrackId) = set(
+        trackId,
+        TrackVerification(state = VerificationState.TRUSTED, personId = PersonId(1L))
+    )
 }
 
 /** Captures detector failures instead of writing to logcat. */

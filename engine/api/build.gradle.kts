@@ -17,7 +17,10 @@ android {
 }
 
 dependencies {
-    implementation(project(":core:model"))
+    // api, not implementation: engine/api's own contracts expose core/model
+    // types (TrackId, TrackedBox, FrameMetadata) in their signatures, so every
+    // consumer of this module needs them on its compile classpath.
+    api(project(":core:model"))
     implementation(project(":core:common"))
 
     implementation(libs.androidx.lifecycle.runtime.ktx)

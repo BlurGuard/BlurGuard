@@ -37,20 +37,51 @@ The engine is an internal SDK. App and feature modules consume it through `engin
 - feature/gallery/        gallery browse + post-capture manual edit
 - feature/settings/       privacy / anonymization / security / export menus
 
-- core/domain/            app-level use cases and non-hot-path business rules
+- core/domain/            PLANNED — app-level use cases and non-hot-path business rules.
+                          Not in settings.gradle.kts yet; do not import it until it is added.
 - core/data/              settings, media store, encrypted embedding store handles, panic delete, temp cleanup
-- core/model/             shared immutable app entities (LEAF module)
+- core/model/             cross-module contracts + shared immutable entities.
+                          LEAF module: interfaces, data classes, enums and value classes ONLY.
+                          No mutable state, no behaviour, no implementations.
 - core/designsystem/      Compose theme, reusable components, AR/EN localization
 - core/common/            dispatchers, Result types, safe logging helpers, utilities
 
-- engine/api/             public engine contracts consumed by app/features
-- engine/impl/            real-time pipeline orchestration + real Hilt bindings
+- engine/api/             public engine contracts consumed by app/features, including the
+                          keep-visible contracts (KeepVisibleController, KeepVisibleRecognizer)
+- engine/impl/            real-time pipeline orchestration, pipeline stages (incl. KeepVisibleStage)
+                          + the real Hilt bindings
 - engine/camera/          CameraX session + SurfaceProcessor pipeline. The ONLY module allowed to write video.
-- engine/render/          GPU blur/pixelate/mask rendering, watermark, metadata strip on export
-- engine/ml/              TFLite/LiteRT model wrappers + delegate management
-- engine/tracking/        ByteTrack multi-object tracking
-- engine/recognition/     face embedding matching + enrollment
+- engine/render/          GPU blur/pixelate/mask rendering, watermark, metadata strip on export.
+                          The ONLY module doing GPU work.
+- engine/ml/              ON-DEVICE MODEL RUNTIME. All TFLite/LiteRT + MediaPipe wrappers and
+                          accelerator management:
+                            • detection: YoloDetector, MediaPipeFaceDetector
+                            • face embedding extraction: MobileFaceNetRecognizer
+                            • landmark alignment: FaceAligner, SimilarityTransform
+                            • accelerator policy owner: TfliteInterpreterFactory
+                              (NNAPI/NPU first, automatic CPU/XNNPACK fallback,
+                              GPU reserved for engine/render)
+                            • debug primitives: DetectorDiagnostics, DetectorClock, isDebugBuild()
+                          The ONLY module allowed to declare litert / mediapipe dependencies.
+- engine/tracking/        multi-object tracking (OC-SORT)
+- engine/recognition/     IDENTITY POLICY. Keep-visible trust decisions and their state:
+                          KeepVisibleOrchestrator, the verification state store implementation,
+                          the trusted-person gallery (SessionTrustedPersonStore), thresholds,
+                          re-verification cadence and quality gating.
+                          Programs against the FaceRecognizer / TrustedPersonStore abstractions in
+                          core/model — it must NEVER depend on engine/ml and must contain NO TFLite
+                          dependency.
 - benchmark/              macrobenchmark guarding frame latency
+
+Split of responsibility to remember: **engine/ml runs models** (where faces are, what their
+embedding is); **engine/recognition decides identity and trust** (who they are, whether the box
+may be unblurred, how often to re-check). They are siblings with no dependency between them; the
+concrete recognizer is injected into the orchestrator by engine/impl's Hilt module.
+
+There is NO `core/ml`, `core/recognition`, `core/processing` or `core/blurring` module, and no
+`engine/blurring`. All real-time pipeline code lives under `engine/*`: GPU blur/pixelate/mask
+renderers in `engine/render`, frame-path orchestration in `engine/impl`, model inference in
+`engine/ml`, identity policy in `engine/recognition`.
 
 Before adding code, decide which module owns it using the list above. Never put logic in the wrong layer for convenience.
 
@@ -59,7 +90,7 @@ Before adding code, decide which module owns it using the list above. Never put 
 Allowed dependencies:
 
 - app -> feature/*, core/*, engine/api, engine/impl
-- feature/* -> core/domain, core/data, core/model, core/designsystem, core/common, engine/api ONLY
+- feature/* -> core/domain (when added), core/data, core/model, core/designsystem, core/common, engine/api ONLY
 - core/domain -> core/data, core/model, core/common, engine/api
 - core/data -> core/model, core/common
 - core/designsystem -> core/model, core/common
@@ -72,10 +103,15 @@ Forbidden dependencies:
 
 - feature/* MUST NOT depend on another feature/*
 - feature/* MUST NOT depend on engine/impl or engine implementation modules
-- feature/* MUST NOT import CameraX, TFLite, MediaCodec, OpenGL, ByteTrack, or MobileFaceNet implementation details
+- feature/* MUST NOT import CameraX, TFLite, MediaCodec, OpenGL, tracker, or MobileFaceNet implementation details
 - core/domain MUST NOT depend on engine/impl or engine implementation modules
 - engine/api MUST NOT depend on engine/impl or implementation modules
 - engine implementation modules MUST NOT depend on feature/*, app/, or core/designsystem
+- engine/recognition MUST NOT depend on engine/ml, and engine/ml MUST NOT depend on
+  engine/recognition. Identity policy talks to models only through the core/model abstractions
+  (FaceRecognizer, TrustedPersonStore); engine/impl wires the concrete implementation in.
+- No module other than engine/ml may declare a litert / mediapipe.tasks.vision dependency.
+- Do not duplicate a source file across two modules to avoid a dependency. Move it, don't copy it.
 - app may depend on engine/impl ONLY as the DI composition root. Do not put feature logic in app that calls engine internals.
 
 ## 4. The two data paths: NEVER conflate
@@ -113,6 +149,8 @@ Allowed API concepts:
 - EngineWarning
 - AnonymizationMode
 - TrustedFaceRef
+- KeepVisibleController (non-generic, UI-facing keep-visible commands)
+- KeepVisibleRecognizer<F> (frame-generic pipeline SPI)
 - safe preview/recording targets
 
 Forbidden API concepts:
@@ -123,7 +161,7 @@ Forbidden API concepts:
 - TFLite Interpreter
 - MediaCodec internals
 - OpenGL renderer internals
-- ByteTrack internals
+- tracker internals
 - MobileFaceNet/ArcFace internals
 - CameraUiState or any UI-specific state class
 
@@ -138,15 +176,17 @@ The engine API must be stable, narrow, and privacy-preserving.
 5. ON-DEVICE ONLY: no inference, embedding, or footage may leave the device.
 6. OFFLINE-ONLY: network policy is enforced centrally in app/, not per-feature.
 7. METADATA STRIP: GPS/device/timestamp metadata removal is mandatory and default-on during export in `engine/render`.
-8. EMBEDDING SAFETY: trusted-face embeddings live in encrypted on-device storage and are wiped by panic delete; never exported.
+8. EMBEDDING SAFETY: trusted-face embeddings stay on-device (session-only in-memory today, encrypted storage if ever persisted), are wiped by panic delete, and are never exported.
 9. FRAME PATH OFF UI THREAD: no per-frame work in ViewModels or Compose.
-10. FAIL CLOSED: if detection/tracking/recognition confidence is uncertain, anonymize rather than reveal.
+10. FAIL CLOSED: if detection/tracking/recognition confidence is uncertain, anonymize rather than reveal. A recognition pass that is skipped, throttled, quality-gated or failed keeps the face blurred; only a positive trusted match may unblur.
 
 If a change could violate any invariant above, refuse and explain. Do not weaken an invariant to make a test pass.
 
 ## 7. Concurrency rules
 
-- Detection runs on a background/ML dispatcher with NNAPI/GPU delegate, on SUBSAMPLED ImageAnalysis frames, not every frame.
+- Detection runs on a background/ML dispatcher with the NNAPI delegate (CPU fallback), on SUBSAMPLED ImageAnalysis frames, not every frame.
+- Recognition is rarer still: at most one recognizer call per detection frame, gated per track by a minimum re-verification interval and cheap quality gates. Skipping is always fail-closed.
+- Identity state (verification map, trusted galleries) is single-threaded on the ml dispatcher; UI threads reach it only through KeepVisibleController.
 - Rendering runs on the GPU every frame; use tracker output to interpolate between detections.
 - No allocations or blocking calls in the per-frame hot loop.
 - Pass detection results to the renderer via a latest-value/conflated channel; drop stale frames, never queue-and-lag.
@@ -161,27 +201,31 @@ If a change could violate any invariant above, refuse and explain. Do not weaken
 - Settings use Proto DataStore in `core/data`.
 - Saved files use names like `BlurGuard_YYYY-MM-DD_HH-mm.mp4`.
 - Keep models/runtimes swappable behind interfaces.
-- No direct TFLite calls outside `engine/ml`.
+- No direct TFLite/LiteRT or MediaPipe call outside `engine/ml`.
 - No direct CameraX session ownership outside `engine/camera`.
 - No direct GPU anonymization/rendering implementation outside `engine/render`.
 - No direct tracker implementation outside `engine/tracking`.
-- No direct recognition implementation outside `engine/recognition`.
+- No identity/trust decision logic outside `engine/recognition`.
+- Kotlin sources end in `.kt` — never `.k.kt`.
+- Debug instrumentation follows the DetectorDiagnostics pattern in `engine/ml`: a no-op when
+  disabled, enabled from `isDebugBuild()`, time sourced from an injectable clock. No
+  commented-out `Log` lines in production sources.
 
 ## 9. Decision guide: where does this go?
 
 - New screen/UI -> feature/* (+ core/designsystem for shared components)
 - New screen state/event handling -> feature/* ViewModel
-- New app-level use case that is not per-frame hot path -> core/domain
+- New app-level use case that is not per-frame hot path -> core/domain (once added)
 - Settings, media listing, deletion, encrypted stores -> core/data
-- Shared app model -> core/model
+- Shared cross-module contract or immutable entity -> core/model (interface or immutable data only)
 - Shared utility, dispatcher, safe logging -> core/common
 - Engine public contract -> engine/api
-- Real-time pipeline orchestration -> engine/impl
+- Real-time pipeline orchestration and pipeline stages -> engine/impl
 - CameraX session, processed recording, SurfaceProcessor ownership -> engine/camera
 - GPU blur/pixelate/mask/watermark/metadata strip -> engine/render
-- ML model wrapper or delegate -> engine/ml
+- Any TFLite/MediaPipe model wrapper, delegate, or alignment step -> engine/ml
 - Tracking logic -> engine/tracking
-- Face embedding match/enrollment -> engine/recognition
+- Trust/identity decisions, verification state, trusted-person gallery, recognition cadence -> engine/recognition
 - Performance tests for frame latency/FPS -> benchmark
 
 ## 10. Pre-change review checklist: apply to every diff
@@ -189,14 +233,18 @@ If a change could violate any invariant above, refuse and explain. Do not weaken
 - [ ] Code is in the correct module per section 2.
 - [ ] No forbidden dependency or cycle introduced.
 - [ ] Feature modules import only `engine/api`, not engine implementation modules.
+- [ ] `engine/recognition` still has no dependency on `engine/ml` and no TFLite dependency.
+- [ ] No litert / mediapipe dependency added outside `engine/ml`.
 - [ ] No frame/pixel data routed through ViewModel/StateFlow/LiveData.
 - [ ] `engine/api` does not expose raw frames, raw surfaces, ImageProxy, Bitmap, or byte arrays.
 - [ ] Only `engine/camera` writes video, and only processed anonymized output.
 - [ ] No raw footage written anywhere.
 - [ ] No network access in record/process paths.
 - [ ] Metadata strip preserved on export.
-- [ ] Embeddings stay encrypted/on-device and panic-deletable.
+- [ ] Embeddings stay on-device and panic-deletable.
 - [ ] Per-frame hot loop has no allocations/blocking.
+- [ ] `core/model` still holds interfaces and immutable data only (no MutableStateFlow, mutable collections, counters, or implementations).
+- [ ] No source file duplicated across two modules.
 - [ ] Tests use fake engine where possible.
 - [ ] App uses `engine/impl` only for DI composition.
 
@@ -210,4 +258,8 @@ If a change could violate any invariant above, refuse and explain. Do not weaken
 - Adding cloud inference, telemetry, crash uploads, or analytics that could carry frame data.
 - God-classes in feature ViewModels that embed detection/tracking/rendering logic.
 - Putting real-time frame orchestration in `core/domain` instead of `engine/impl`.
+- Putting mutable state or implementations (MutableStateFlow, mutable collections, ID counters, in-memory stores) in `core/model`.
+- `engine/recognition` importing `engine/ml` instead of the core/model abstraction.
+- Adding TFLite/MediaPipe dependencies to a module other than `engine/ml`.
+- Copying a class into a second module instead of moving it, leaving two live packages.
 - Making `engine/api` UI-specific by exposing `CameraUiState`.

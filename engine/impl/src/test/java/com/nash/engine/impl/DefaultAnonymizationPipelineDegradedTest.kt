@@ -3,12 +3,12 @@ package com.nash.engine.impl
 import com.nash.core.model.DetectionBox
 import com.nash.core.model.Detector
 import com.nash.core.model.FrameMetadata
-import com.nash.core.model.KeepVisibleState
 import com.nash.core.model.RenderBoxFeed
 import com.nash.engine.impl.pipeline.DetectionRunner
 import com.nash.engine.impl.pipeline.DetectionScheduler
 import com.nash.engine.impl.pipeline.FakeClock
 import com.nash.engine.impl.pipeline.FakeKeepVisibleRecognizer
+import com.nash.engine.impl.pipeline.FakeKeepVisibleState
 import com.nash.engine.impl.pipeline.FakeTracker
 import com.nash.engine.impl.pipeline.KeepVisibleStage
 import com.nash.engine.impl.pipeline.PipelineStatsCollector
@@ -51,7 +51,7 @@ class DefaultAnonymizationPipelineDegradedTest {
         scheduler = DetectionScheduler(detectionInterval = 1L),
         detectionRunner = DetectionRunner(listOf(detector), RecordingFailurePolicy()),
         trackingStage = TrackingStage(FakeTracker()),
-        keepVisibleStage = KeepVisibleStage(FakeKeepVisibleRecognizer(), KeepVisibleState()),
+        keepVisibleStage = KeepVisibleStage(FakeKeepVisibleRecognizer(), FakeKeepVisibleState()),
         boxMapper = VisibleRegionBoxMapper(),
         publisher = TrackedBoxPublisher(RenderBoxFeed()),
         statsCollector = PipelineStatsCollector(clock = FakeClock()),

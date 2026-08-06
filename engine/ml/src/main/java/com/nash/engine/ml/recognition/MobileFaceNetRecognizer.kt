@@ -3,7 +3,6 @@ package com.nash.engine.ml.recognition
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Matrix
-import android.os.SystemClock
 import android.util.Log
 import androidx.camera.core.ImageProxy
 import com.nash.core.common.DispatcherProvider
@@ -12,11 +11,19 @@ import com.nash.core.model.FaceEmbedding
 import com.nash.core.model.FaceRecognizer
 import com.nash.core.model.FrameMetadata
 import com.nash.core.model.RecognitionConfig
+import com.nash.engine.ml.isDebugBuild
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.tensorflow.lite.Interpreter
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.nio.FloatBuffer
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -42,16 +49,8 @@ class MobileFaceNetRecognizer @Inject constructor(
         val buffer = ByteBuffer.allocateDirect(model.size).order(ByteOrder.nativeOrder())
         buffer.put(model)
         buffer.rewind()
-        val tempInterperter: Interpreter =Interpreter(buffer, Interpreter.Options().setNumThreads(NUM_THREADS))
-
-        Log.i(TAG, "model spec: input=${tempInterperter.getInputTensor(0).shape().contentToString()} " +
-                "${tempInterperter.getInputTensor(0).dataType()} " +
-                "output=${tempInterperter.getOutputTensor(0).shape().contentToString()} " +
-                "${tempInterperter.getOutputTensor(0).dataType()}")
-
-        tempInterperter
+        Interpreter(buffer, Interpreter.Options().setNumThreads(NUM_THREADS))
     }
-
 
     private val embeddingSize: Int by lazy {
         // Pin the input to a concrete shape and allocate before reading the
@@ -60,81 +59,146 @@ class MobileFaceNetRecognizer @Inject constructor(
         interpreter.allocateTensors()
         val inShape = interpreter.getInputTensor(0).shape()
         val outShape = interpreter.getOutputTensor(0).shape()
-        Log.i(TAG, "model spec (allocated): input=${inShape.contentToString()} " +
-                "${interpreter.getInputTensor(0).dataType()} " +
-                "output=${outShape.contentToString()} ${interpreter.getOutputTensor(0).dataType()}")
+        if (debugLogging) {
+            Log.i(
+                TAG,
+                "model spec: input=${inShape.contentToString()} " +
+                        "${interpreter.getInputTensor(0).dataType()} " +
+                        "output=${outShape.contentToString()} " +
+                        "${interpreter.getOutputTensor(0).dataType()}"
+            )
+        }
         val size = outShape.last()
         require(size > 0) { "Unusable output shape ${outShape.contentToString()}" }
         size
     }
 
+    private val debugLogging: Boolean = context.isDebugBuild()
+
+    private val diagnostics = RecognizerDiagnostics(enabled = debugLogging, tag = TAG)
+
     private val inputBuffer: ByteBuffer by lazy {
-        ByteBuffer.allocateDirect(INPUT_SIZE * INPUT_SIZE * 3 * 4).order(ByteOrder.nativeOrder())
+        ByteBuffer
+            .allocateDirect(INPUT_SIZE * INPUT_SIZE * MobileFaceNetPreprocessor.CHANNELS * 4)
+            .order(ByteOrder.nativeOrder())
     }
+
+    /** Float view over [inputBuffer], so the fill is one bulk copy. */
+    private val inputFloats: FloatBuffer by lazy { inputBuffer.asFloatBuffer() }
+
     private val pixels = IntArray(INPUT_SIZE * INPUT_SIZE)
 
-    // Split-timing probes (debug), same EMA pattern as YoloDetector.
-    private var emaAlignMs = 0.0
-    private var emaInferMs = 0.0
-    private var timedCalls = 0L
-    private var lastLogUptimeMs = 0L
+    /** Reused staging array; fully overwritten every pass. */
+    private val tensorScratch =
+        FloatArray(INPUT_SIZE * INPUT_SIZE * MobileFaceNetPreprocessor.CHANNELS)
+
+    /**
+     * Serializes model use. Real embeds are already serialized by the ml
+     * dispatcher; this exists so a tap arriving during warm-up cannot run a
+     * second concurrent inference on the same non-thread-safe interpreter.
+     */
+    private val modelLock = Mutex()
+
+    private val warmUpScope = CoroutineScope(SupervisorJob())
+
+    init {
+        // Both interpreters are `by lazy`, so without this the first tap pays
+        // for two model loads (~460 ms measured). Hilt builds this singleton
+        // when the camera screen opens, well before any tap, so the load is
+        // free real time. Deliberately NOT on dispatcherProvider.ml: stalling
+        // the detection thread at camera-open would leave faces unblurred.
+        warmUpScope.launch(dispatcherProvider.io) { warmUp() }
+    }
+
+    /**
+     * Forces model load and one inference through each model. Uses throwaway
+     * buffers so the shared scratch is never touched from this thread.
+     * Failures are logged and swallowed — a failed warm-up must degrade to the
+     * old lazy behavior, never crash the camera.
+     */
+    private suspend fun warmUp() = modelLock.withLock {
+        try {
+            val blank = Bitmap.createBitmap(INPUT_SIZE, INPUT_SIZE, Bitmap.Config.ARGB_8888)
+            // Returns null (no face in a blank image) but builds the MediaPipe
+            // detector and runs one real BlazeFace pass.
+            aligner.align(blank)
+            blank.recycle()
+
+            val scratch = ByteBuffer
+                .allocateDirect(INPUT_SIZE * INPUT_SIZE * MobileFaceNetPreprocessor.CHANNELS * 4)
+                .order(ByteOrder.nativeOrder())
+            scratch.rewind()
+            val output = Array(1) { FloatArray(embeddingSize) }
+            interpreter.run(scratch, output)
+
+            if (debugLogging) Log.i(TAG, "warm-up complete")
+        } catch (e: Exception) {
+            Log.w(TAG, "warm-up failed; falling back to lazy init on first use", e)
+        }
+    }
 
     override suspend fun embed(
         frame: ImageProxy,
         faceBox: BoundingBox,
         metadata: FrameMetadata
     ): FaceEmbedding? = withContext(dispatcherProvider.ml) {
-//        Log.d(TAG, "input=${interpreter.getInputTensor(0).shape().contentToString()} " +
-//                "${interpreter.getInputTensor(0).dataType()} " +
-//                "output=${interpreter.getOutputTensor(0).shape().contentToString()}")
-        val t0 = SystemClock.elapsedRealtimeNanos()
+        modelLock.withLock {
+            val t0 = diagnostics.mark()
 
-        // 1) Upright bitmap. faceBox is in upright normalized space, so rotate
-        //    the buffer first and crop with no coordinate gymnastics.
-        val upright = frame.toBitmap().rotatedToUpright(metadata.rotationDegrees)
+            // 1) Upright bitmap. faceBox is in upright normalized space, so rotate
+            //    the buffer first and crop with no coordinate gymnastics.
+            val raw = frame.toBitmap()
+            val tBitmap = diagnostics.mark()
+            val upright = raw.rotatedToUpright(metadata.rotationDegrees)
+            val tRotate = diagnostics.mark()
 
-        // 2) Dilated crop (margin gives the landmark model context), clamped.
-        val margin = CROP_DILATION
-        val left = ((faceBox.left - margin * width(faceBox)) * upright.width).toInt()
-            .coerceIn(0, upright.width - 1)
-        val top = ((faceBox.top - margin * height(faceBox)) * upright.height).toInt()
-            .coerceIn(0, upright.height - 1)
-        val right = ((faceBox.right + margin * width(faceBox)) * upright.width).toInt()
-            .coerceIn(left + 1, upright.width)
-        val bottom = ((faceBox.bottom + margin * height(faceBox)) * upright.height).toInt()
-            .coerceIn(top + 1, upright.height)
-        val crop = Bitmap.createBitmap(upright, left, top, right - left, bottom - top)
+            // 2) Dilated crop (margin gives the landmark model context), clamped.
+            val margin = CROP_DILATION
+            val left = ((faceBox.left - margin * width(faceBox)) * upright.width).toInt()
+                .coerceIn(0, upright.width - 1)
+            val top = ((faceBox.top - margin * height(faceBox)) * upright.height).toInt()
+                .coerceIn(0, upright.height - 1)
+            val right = ((faceBox.right + margin * width(faceBox)) * upright.width).toInt()
+                .coerceIn(left + 1, upright.width)
+            val bottom = ((faceBox.bottom + margin * height(faceBox)) * upright.height).toInt()
+                .coerceIn(top + 1, upright.height)
+            val crop = Bitmap.createBitmap(upright, left, top, right - left, bottom - top)
+            val tCrop = diagnostics.mark()
 
-        // 3) Landmark alignment. Null = quality gate failed = no decision.
-        val aligned = aligner.align(crop) ?: return@withContext null
-        val t1 = SystemClock.elapsedRealtimeNanos()
+            // 3) Landmark alignment. Null = quality gate failed = no decision.
+            val aligned = aligner.align(crop) ?: run {
+                diagnostics.recordSkip()
+                return@withLock null
+            }
+            val tAlign = diagnostics.mark()
 
-        // 4) Preprocess: MobileFaceNet convention (x - 127.5) / 127.5, NHWC RGB.
-        aligned.getPixels(pixels, 0, INPUT_SIZE, 0, 0, INPUT_SIZE, INPUT_SIZE)
-        inputBuffer.rewind()
-        for (pixel in pixels) {
-            inputBuffer.putFloat((((pixel shr 16) and 0xFF) - 127.5f) / 127.5f)
-            inputBuffer.putFloat((((pixel shr 8) and 0xFF) - 127.5f) / 127.5f)
-            inputBuffer.putFloat(((pixel and 0xFF) - 127.5f) / 127.5f)
+            // 4) Preprocess into a FloatArray, then one bulk copy into the
+            //    direct buffer. Per-element putFloat measured 54 ms/pass.
+            aligned.getPixels(pixels, 0, INPUT_SIZE, 0, 0, INPUT_SIZE, INPUT_SIZE)
+            MobileFaceNetPreprocessor.fill(pixels, tensorScratch)
+            inputFloats.rewind()
+            inputFloats.put(tensorScratch)
+            inputBuffer.rewind()
+            val tPreprocess = diagnostics.mark()
+
+            val output = Array(1) { FloatArray(embeddingSize) }
+            try {
+                interpreter.run(inputBuffer, output)
+            } catch (e: Exception) {
+                Log.e(TAG, "inference failed", e)
+                return@withLock null
+            }
+            val tInfer = diagnostics.mark()
+
+            diagnostics.record(t0, tBitmap, tRotate, tCrop, tAlign, tPreprocess, tInfer)
+
+            // 5) L2 normalize; degenerate vectors become null (fail-closed).
+            FaceEmbedding.fromRaw(output[0])
         }
-        inputBuffer.rewind()
-
-        val output = Array(1) { FloatArray(embeddingSize) }
-        try {
-            interpreter.run(inputBuffer, output)
-        } catch (e: Exception) {
-            Log.e(TAG, "inference failed", e)
-            return@withContext null
-        }
-        val t2 = SystemClock.elapsedRealtimeNanos()
-
-        logTimings((t1 - t0) / 1e6, (t2 - t1) / 1e6)
-
-        // 5) L2 normalize; degenerate vectors become null (fail-closed).
-        FaceEmbedding.fromRaw(output[0])
     }
 
     override fun close() {
+        warmUpScope.cancel()
         aligner.close()
         interpreter.close()
     }
@@ -147,18 +211,6 @@ class MobileFaceNetRecognizer @Inject constructor(
 
     private fun width(box: BoundingBox) = box.right - box.left
     private fun height(box: BoundingBox) = box.bottom - box.top
-
-    private fun logTimings(alignMs: Double, inferMs: Double) {
-        emaAlignMs = if (timedCalls == 0L) alignMs else emaAlignMs * 0.9 + alignMs * 0.1
-        emaInferMs = if (timedCalls == 0L) inferMs else emaInferMs * 0.9 + inferMs * 0.1
-        timedCalls++
-        val now = SystemClock.uptimeMillis()
-        if (now - lastLogUptimeMs >= 1000) {
-            lastLogUptimeMs = now
-//            Log.d(TAG, "align=%.1fms infer=%.1fms calls=%d"
-//                .format(emaAlignMs, emaInferMs, timedCalls))
-        }
-    }
 
     private companion object {
         const val TAG = "FaceRecognizer"

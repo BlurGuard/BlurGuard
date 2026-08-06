@@ -4,12 +4,14 @@ package com.nash.core.model
  * Store of trusted-person embedding galleries.
  *
  * The store is threshold-agnostic: it reports the best raw similarity and the
- * orchestrator (core/domain) decides what counts as a match via
+ * keep-visible orchestrator in engine/recognition decides what counts as a match via
  * [RecognitionConfig.matchThreshold].
  *
- * MVP implementation is session-only and in-memory ([SessionTrustedPersonStore]);
- * a persistent implementation must use the encrypted on-device store and hook
- * into panic delete (architecture invariant #6) — flagged as a mentor decision.
+ * MVP implementation is session-only and in-memory (`SessionTrustedPersonStore` in
+ * engine/recognition, alongside the trust policy that drives it). A persistent
+ * implementation belongs in core/data instead: it must use the encrypted on-device
+ * store and hook into panic delete (architecture invariant #8) — flagged as a mentor
+ * decision.
  */
 interface TrustedPersonStore {
 

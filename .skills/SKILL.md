@@ -37,27 +37,48 @@ The engine is an internal SDK. App and feature modules consume it through `engin
 - feature/gallery/        gallery browse + post-capture manual edit
 - feature/settings/       privacy / anonymization / security / export menus
 
-- core/domain/            app-level use cases and non-hot-path business rules
+- core/domain/            PLANNED — app-level use cases and non-hot-path business rules.
+                          Not in settings.gradle.kts yet; do not import it until it is added.
 - core/data/              settings, media store, encrypted embedding store handles, panic delete, temp cleanup
-- core/model/             shared immutable app entities (LEAF module)
+- core/model/             cross-module contracts + shared immutable entities. LEAF module:
+                          interfaces, data classes, enums, value classes ONLY — no mutable
+                          state, no implementations.
 - core/designsystem/      Compose theme, reusable components, AR/EN localization
 - core/common/            dispatchers, Result types, safe logging helpers, utilities
 
-- engine/api/             public engine contracts consumed by app/features
-- engine/impl/            real-time pipeline orchestration + real Hilt bindings
+- engine/api/             public engine contracts consumed by app/features, including the
+                          keep-visible contracts (KeepVisibleController, KeepVisibleRecognizer)
+- engine/impl/            real-time pipeline orchestration, pipeline stages, real Hilt bindings
 - engine/camera/          CameraX session + SurfaceProcessor pipeline. The ONLY module allowed to write video.
 - engine/render/          GPU blur/pixelate/mask rendering, watermark, metadata strip on export
-- engine/ml/              TFLite/LiteRT model wrappers + delegate management
-- engine/tracking/        ByteTrack multi-object tracking
-- engine/recognition/     face embedding matching + enrollment
+- engine/ml/              ON-DEVICE MODEL RUNTIME: every TFLite/LiteRT + MediaPipe wrapper.
+                          Detection (YoloDetector, MediaPipeFaceDetector), face embedding
+                          extraction (MobileFaceNetRecognizer), landmark alignment (FaceAligner,
+                          SimilarityTransform), accelerator policy owner TfliteInterpreterFactory
+                          (NNAPI first, CPU fallback, GPU reserved for engine/render), and the
+                          debug primitives DetectorDiagnostics / DetectorClock / isDebugBuild().
+                          The ONLY module allowed to declare litert / mediapipe dependencies.
+- engine/tracking/        multi-object tracking (OC-SORT)
+- engine/recognition/     IDENTITY POLICY: KeepVisibleOrchestrator, verification state store
+                          implementation, trusted-person gallery (SessionTrustedPersonStore),
+                          thresholds, re-verification cadence, quality gating. Talks to models
+                          only through core/model abstractions — NO dependency on engine/ml,
+                          NO TFLite dependency.
 - benchmark/              macrobenchmark guarding frame latency
+
+engine/ml **runs models**; engine/recognition **decides identity and trust**. They are siblings
+with no dependency between them; engine/impl injects the concrete recognizer into the orchestrator.
+
+There is NO `core/ml`, `core/recognition`, `core/processing` or `core/blurring` module, and no
+`engine/blurring`. GPU blur/pixelate/mask renderers live in `engine/render`, frame-path
+orchestration in `engine/impl`.
 
 ## 3. Dependency direction: MUST NOT create cycles
 
 Allowed dependencies:
 
 - app -> feature/*, core/*, engine/api, engine/impl
-- feature/* -> core/domain, core/data, core/model, core/designsystem, core/common, engine/api ONLY
+- feature/* -> core/domain (when added), core/data, core/model, core/designsystem, core/common, engine/api ONLY
 - core/domain -> core/data, core/model, core/common, engine/api
 - engine/api -> core/model, core/common only
 - engine/impl -> engine/api, engine/camera, engine/render, engine/ml, engine/tracking, engine/recognition, core/data, core/model, core/common
@@ -67,7 +88,9 @@ Forbidden dependencies:
 
 - feature/* MUST NOT depend on engine/impl or engine implementation modules.
 - engine/api MUST NOT depend on engine/impl or implementation modules.
-- Only app may depend on engine/impl for DI composition.
+- engine/recognition MUST NOT depend on engine/ml, and vice versa. No duplicated sources between them.
+- No litert / mediapipe.tasks.vision dependency outside engine/ml.
+- Only app may depend on engine/impl, for DI composition.
 
 ## 4. Hard privacy & safety invariants: NON-NEGOTIABLE
 
@@ -76,7 +99,7 @@ Forbidden dependencies:
 3. NO RAW PERSISTENCE: un-anonymized frames must NEVER reach disk, cache, MediaStore, logs, crash reports, or analytics.
 4. NO RAW FRAME EXPOSURE: `engine/api` must not expose raw frames, raw surfaces, ImageProxy, Bitmap, or raw frame byte arrays.
 5. ON-DEVICE ONLY: no inference, embedding, or footage may leave the device.
-6. FAIL CLOSED: if detection/tracking/recognition confidence is uncertain, anonymize rather than reveal.
+6. FAIL CLOSED: if detection/tracking/recognition confidence is uncertain, anonymize rather than reveal. A skipped, throttled, quality-gated or failed recognition pass keeps the face blurred.
 
 ## 5. Conventions
 
@@ -84,3 +107,8 @@ Forbidden dependencies:
 - ViewModels map `engine/api` state into feature-specific UiState.
 - Use fake `BlurGuardEngine` implementations for feature tests.
 - Per-frame hot loop has no allocations or blocking calls.
+- Identity state is single-threaded on the ml dispatcher; UI reaches it only via KeepVisibleController.
+- `core/model` holds interfaces and immutable data only — never MutableStateFlow, mutable collections, ID counters, or in-memory stores.
+- Kotlin sources end in `.kt` — never `.k.kt`.
+- Debug instrumentation follows the DetectorDiagnostics pattern in `engine/ml`: no-op when disabled,
+  enabled from `isDebugBuild()`, injectable clock. No commented-out `Log` lines in production sources.

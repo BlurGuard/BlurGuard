@@ -1,4 +1,4 @@
-package com.nash.engine.impl.keepvisible
+package com.nash.engine.api.keepvisible
 
 import com.nash.core.model.FrameMetadata
 import com.nash.core.model.TrackedBox
@@ -7,9 +7,11 @@ import com.nash.core.model.TrackedBox
  * The recognition half of keep-visible, as seen by the pipeline.
  *
  * Exists so the pipeline can be unit-tested without a TFLite recognizer,
- * trusted-person store or config. Implemented by [KeepVisibleOrchestrator].
+ * trusted-person store or config. Implemented by KeepVisibleOrchestrator in
+ * engine/recognition — which is why this contract lives in engine/api rather
+ * than being internal to engine/impl.
  */
-internal interface KeepVisibleRecognizer<in F> {
+interface KeepVisibleRecognizer<in F> {
 
     /**
      * Advances recognition for this detection frame: drains revoke requests,
