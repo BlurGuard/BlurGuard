@@ -23,6 +23,7 @@ import kotlinx.coroutines.withContext
 import org.tensorflow.lite.Interpreter
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.nio.FloatBuffer
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -77,9 +78,19 @@ class MobileFaceNetRecognizer @Inject constructor(
     private val diagnostics = RecognizerDiagnostics(enabled = debugLogging, tag = TAG)
 
     private val inputBuffer: ByteBuffer by lazy {
-        ByteBuffer.allocateDirect(INPUT_SIZE * INPUT_SIZE * 3 * 4).order(ByteOrder.nativeOrder())
+        ByteBuffer
+            .allocateDirect(INPUT_SIZE * INPUT_SIZE * MobileFaceNetPreprocessor.CHANNELS * 4)
+            .order(ByteOrder.nativeOrder())
     }
+
+    /** Float view over [inputBuffer], so the fill is one bulk copy. */
+    private val inputFloats: FloatBuffer by lazy { inputBuffer.asFloatBuffer() }
+
     private val pixels = IntArray(INPUT_SIZE * INPUT_SIZE)
+
+    /** Reused staging array; fully overwritten every pass. */
+    private val tensorScratch =
+        FloatArray(INPUT_SIZE * INPUT_SIZE * MobileFaceNetPreprocessor.CHANNELS)
 
     /**
      * Serializes model use. Real embeds are already serialized by the ml
@@ -101,9 +112,9 @@ class MobileFaceNetRecognizer @Inject constructor(
 
     /**
      * Forces model load and one inference through each model. Uses throwaway
-     * buffers so the shared [inputBuffer] and [pixels] scratch are never
-     * touched from this thread. Failures are logged and swallowed — a failed
-     * warm-up must degrade to the old lazy behavior, never crash the camera.
+     * buffers so the shared scratch is never touched from this thread.
+     * Failures are logged and swallowed — a failed warm-up must degrade to the
+     * old lazy behavior, never crash the camera.
      */
     private suspend fun warmUp() = modelLock.withLock {
         try {
@@ -114,7 +125,7 @@ class MobileFaceNetRecognizer @Inject constructor(
             blank.recycle()
 
             val scratch = ByteBuffer
-                .allocateDirect(INPUT_SIZE * INPUT_SIZE * 3 * 4)
+                .allocateDirect(INPUT_SIZE * INPUT_SIZE * MobileFaceNetPreprocessor.CHANNELS * 4)
                 .order(ByteOrder.nativeOrder())
             scratch.rewind()
             val output = Array(1) { FloatArray(embeddingSize) }
@@ -161,14 +172,12 @@ class MobileFaceNetRecognizer @Inject constructor(
             }
             val tAlign = diagnostics.mark()
 
-            // 4) Preprocess: MobileFaceNet convention (x - 127.5) / 127.5, NHWC RGB.
+            // 4) Preprocess into a FloatArray, then one bulk copy into the
+            //    direct buffer. Per-element putFloat measured 54 ms/pass.
             aligned.getPixels(pixels, 0, INPUT_SIZE, 0, 0, INPUT_SIZE, INPUT_SIZE)
-            inputBuffer.rewind()
-            for (pixel in pixels) {
-                inputBuffer.putFloat((((pixel shr 16) and 0xFF) - 127.5f) / 127.5f)
-                inputBuffer.putFloat((((pixel shr 8) and 0xFF) - 127.5f) / 127.5f)
-                inputBuffer.putFloat(((pixel and 0xFF) - 127.5f) / 127.5f)
-            }
+            MobileFaceNetPreprocessor.fill(pixels, tensorScratch)
+            inputFloats.rewind()
+            inputFloats.put(tensorScratch)
             inputBuffer.rewind()
             val tPreprocess = diagnostics.mark()
 
