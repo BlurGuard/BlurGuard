@@ -101,15 +101,17 @@ class KeepVisibleOrchestrator<F>(
 
         val now = nowMs()
 
-        // Priority 1: pending tap. The user asked explicitly, so the size and
-        // stability gates are NOT applied here — only the interval floor, which
-        // spreads MAX_ENROLL_ATTEMPTS over time instead of burning them in ten
-        // consecutive frames and gives the subject a chance to move closer.
+        // Priority 1: pending tap. The user asked explicitly, so the STABILITY gate
+        // is skipped — but the size gate still applies: an undersized face cannot
+        // produce a usable embedding, so the tap stays pending until the subject is
+        // close enough. The interval floor spreads MAX_ENROLL_ATTEMPTS over time.
         val pendingValue = pendingEnrollment.get()
         if (pendingValue != NO_REQUEST) {
             val target = faces.firstOrNull { it.id.value == pendingValue }
             if (target != null) {
-                if (isIntervalElapsed(target, now)) enroll(frame, target, metadata, now)
+                if (isIntervalElapsed(target, now) && isLargeEnough(target, metadata)) {
+                    enroll(frame, target, metadata, now)
+                }
                 return
             }
             debug { "tap: track=$pendingValue no longer alive, dropping request" }
