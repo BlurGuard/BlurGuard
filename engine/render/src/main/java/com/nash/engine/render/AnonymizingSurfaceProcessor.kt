@@ -28,6 +28,11 @@ import java.util.concurrent.Executor
  *
  * Fail-closed: BlurRenderer falls back to BlackBoxRenderer whenever blur
  * preparation cannot be proven valid, so raw pixels are never shown.
+ *
+ * No diagnostics here by design (review fix 29): this runs per composited
+ * frame on the GL thread, where even a disabled probe is a branch in the
+ * hottest loop in the app. Keep-visible counts are observable from the
+ * orchestrator's debug logging, one layer up and orders of magnitude cheaper.
  */
 class AnonymizingSurfaceProcessor(
     private val renderBoxFeed: RenderBoxFeed,
@@ -60,7 +65,6 @@ class AnonymizingSurfaceProcessor(
     private val renderFrame = RenderFrame()
     private val renderOutput = RenderOutput()
     private val boxesScratch = ArrayList<TrackedBox>()
-    private var lastKept = -1
 
     // ------------------------------------------------------------------
     // SurfaceProcessor
@@ -136,8 +140,6 @@ class AnonymizingSurfaceProcessor(
         snapshot.boxes.filterTo(boxesScratch) { !it.keepVisible }
         val boxes = boxesScratch
 
-        if (ENABLE_RENDER_DIAGNOSTICS) logKeepVisibleChanges(snapshot)
-
         renderFrame.update(texMatrix, inputWidth, inputHeight, snapshot.rotationDegrees)
         val renderer = pipeline.rendererFactory.forMode(modeHolder.mode.value)
 
@@ -168,14 +170,6 @@ class AnonymizingSurfaceProcessor(
         }
     }
 
-    private fun logKeepVisibleChanges(snapshot: RenderBoxFeed.Snapshot) {
-        val kept = snapshot.boxes.count { it.keepVisible }
-        if (kept != lastKept) {
-            lastKept = kept
-            Log.d(TAG, "keepVisible boxes in feed: $kept")
-        }
-    }
-
     private fun initGlIfNeeded(): RenderPipeline {
         egl.initIfNeeded()
         return pipeline ?: RenderPipeline(egl).also { pipeline = it }
@@ -197,8 +191,5 @@ class AnonymizingSurfaceProcessor(
 
     private companion object {
         const val TAG = "AnonProcessor"
-
-        /** Keep false in production: no logging from the render hot path. */
-        const val ENABLE_RENDER_DIAGNOSTICS = false
     }
 }

@@ -40,11 +40,17 @@ class KeepVisibleOrchestratorTest {
         reVerifyIntervalFrames = 10L,
         mismatchesToRevoke = 2
     )
-    private var nowMs = 0L
+    private var clockMs = 0L
     private val state = SessionKeepVisibleStateStore()
     private val store = SessionTrustedPersonStore(maxGallerySize = 5, duplicateSimilarity = 0.95f)
     private val recognizer = FakeRecognizer { null }
-    private val orchestrator = KeepVisibleOrchestrator(recognizer, store, state, config) { nowMs }
+    private val orchestrator = KeepVisibleOrchestrator(
+        recognizer = recognizer,
+        store = store,
+        state = state,
+        config = config,
+        nowMs = { clockMs }
+    )
 
     private val alice = FaceEmbedding.fromRaw(floatArrayOf(1f, 0f, 0f))!!
     private val aliceAgain = FaceEmbedding.fromRaw(floatArrayOf(0.95f, 0.05f, 0.05f))!!
@@ -65,7 +71,7 @@ class KeepVisibleOrchestratorTest {
 
     /** Advances the clock in step with the frame id: 30 fps. */
     private fun frame(frameId: Long, vararg boxes: TrackedBox) = runBlocking {
-        nowMs = frameId * MS_PER_FRAME
+        clockMs = frameId * MS_PER_FRAME
         orchestrator.onDetectionFrame(Unit, metadata(frameId), boxes.toList())
     }
 

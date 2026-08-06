@@ -52,11 +52,17 @@ class KeepVisibleOrchestratorCadenceTest {
         minTrackAgeFrames = 4L,
         minTrackConfidence = 0.4f
     )
-    private var nowMs = 0L
+    private var clockMs = 0L
     private val state = SessionKeepVisibleStateStore()
     private val store = SessionTrustedPersonStore(maxGallerySize = 5, duplicateSimilarity = 0.95f)
     private val recognizer = CountingRecognizer { alice }
-    private val orchestrator = KeepVisibleOrchestrator(recognizer, store, state, config) { nowMs }
+    private val orchestrator = KeepVisibleOrchestrator(
+        recognizer = recognizer,
+        store = store,
+        state = state,
+        config = config,
+        nowMs = { clockMs }
+    )
 
     private val alice = FaceEmbedding.fromRaw(floatArrayOf(1f, 0f, 0f))!!
 
@@ -82,7 +88,7 @@ class KeepVisibleOrchestratorCadenceTest {
     )
 
     private fun frame(frameId: Long, atMs: Long, vararg boxes: TrackedBox) = runBlocking {
-        nowMs = atMs
+        clockMs = atMs
         orchestrator.onDetectionFrame(Unit, metadata(frameId), boxes.toList())
     }
 
