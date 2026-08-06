@@ -15,33 +15,34 @@ package com.nash.core.model
  * @property duplicateSimilarity Gallery entries more similar than this to an
  * existing entry are not added (no value in near-duplicates).
  * @property minFaceCropPx Faces whose crop is smaller than this (in analysis-frame
- * pixels) are not embedded — too small to verify reliably. Enforced by the
- * aligner on the DILATED crop, i.e. after the bitmap work; see [minFaceBoxPx]
- * for the cheap gate that runs first.
+ * pixels) are not embedded — too small to verify reliably. Enforced inside the
+ * aligner, after dilation.
+ * @property minFaceBoxPx Minimum tracker-box size, in upright analysis-frame
+ * pixels, on BOTH axes, before a face is worth the expensive recognition path.
+ *
+ * Derived from measured device behavior, not from [minFaceCropPx]. The binding
+ * constraint downstream is the aligner's 20 px minimum inter-eye distance, and
+ * dilation cannot help it — widening the crop adds background, it does not
+ * magnify the face. Observed on-device: a ~35 px box yields ~15 px inter-eye,
+ * a ~52 px box yields ~19 px, i.e. roughly `interEye ~= 0.4 * boxHeight`.
+ * Clearing 20 px with headroom therefore needs ~65 px; 72 adds margin for
+ * pose and lighting. Anything smaller is rejected here for free rather than
+ * after ~34 ms of bitmap, rotation, crop and BlazeFace work.
+ *
+ * Raising this makes the app blur MORE (fail-closed): distant faces simply
+ * stay anonymized until they are close enough to identify reliably.
+ * @property minTrackAgeFrames A track must survive this many frames before it
+ * is eligible for automatic recognition, so tracker noise does not trigger
+ * inference.
+ * @property minTrackConfidence Minimum detector confidence for the automatic
+ * recognition path.
+ * @property minRecognitionIntervalMs Wall-clock floor between two recognition
+ * passes on the same track. Bounds worst-case cost independently of frame rate.
  * @property reVerifyIntervalFrames How often (in frame IDs) a TRUSTED track is
  * re-verified. Defense against tracker ID switches: if the track was stolen by
  * a different face, re-verification revokes it. ~2 s at 30 fps.
  * @property mismatchesToRevoke Consecutive re-verification mismatches before a
  * TRUSTED track is demoted and re-blurred.
- * @property minRecognitionIntervalMs Wall-clock floor between two recognizer
- * calls ON THE SAME TRACK. The frame-count intervals above stay the policy for
- * *when* a check is due; this is the cost bound that survives an fps change,
- * and it is what stops a tap from firing ten full passes back to back. At the
- * default detection cadence (every 2nd frame, 30 fps) the frame intervals are
- * already wider than this, so it changes nothing in the normal case.
- * @property minFaceBoxPx Cheap pre-gate, in analysis-frame pixels, on the RAW
- * tracker box — evaluated before any bitmap is allocated. Deliberately looser
- * than [minFaceCropPx]: the aligner sees a crop dilated by 25% on each side,
- * so a raw box of 64/1.5 ≈ 43 px already passes it. 40 stays below that, which
- * makes this gate strictly more permissive than the aligner's — it exists to
- * skip obviously-tiny boxes for free, never to change which faces verify.
- * @property minTrackAgeFrames How long (in frame IDs, not detection passes) a
- * track must have been observed before AUTOMATIC recognition will spend a pass
- * on it. Brand-new tracks are disproportionately motion-blurred or spurious.
- * An explicit user tap ignores this.
- * @property minTrackConfidence Detector confidence below which a box is not
- * worth embedding. Applies to automatic recognition only; a tap is explicit
- * user intent and is never blocked by a heuristic.
  */
 data class RecognitionConfig(
     val matchThreshold: Float = 0.45f,
@@ -49,10 +50,10 @@ data class RecognitionConfig(
     val maxGallerySize: Int = 5,
     val duplicateSimilarity: Float = 0.95f,
     val minFaceCropPx: Int = 64,
-    val reVerifyIntervalFrames: Long = 5L,
-    val mismatchesToRevoke: Int = 2,
-    val minRecognitionIntervalMs: Long = 150L,
-    val minFaceBoxPx: Int = 40,
+    val minFaceBoxPx: Int = 72,
     val minTrackAgeFrames: Long = 4L,
-    val minTrackConfidence: Float = 0.4f
+    val minTrackConfidence: Float = 0.4f,
+    val minRecognitionIntervalMs: Long = 150L,
+    val reVerifyIntervalFrames: Long = 60L,
+    val mismatchesToRevoke: Int = 2
 )
