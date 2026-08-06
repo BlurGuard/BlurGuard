@@ -170,6 +170,7 @@ class MobileFaceNetRecognizer @Inject constructor(
                 inputBuffer.putFloat(((pixel and 0xFF) - 127.5f) / 127.5f)
             }
             inputBuffer.rewind()
+            val tPreprocess = diagnostics.mark()
 
             val output = Array(1) { FloatArray(embeddingSize) }
             try {
@@ -180,7 +181,7 @@ class MobileFaceNetRecognizer @Inject constructor(
             }
             val tInfer = diagnostics.mark()
 
-            diagnostics.record(t0, tBitmap, tRotate, tCrop, tAlign, tInfer)
+            diagnostics.record(t0, tBitmap, tRotate, tCrop, tAlign, tPreprocess, tInfer)
 
             // 5) L2 normalize; degenerate vectors become null (fail-closed).
             FaceEmbedding.fromRaw(output[0])

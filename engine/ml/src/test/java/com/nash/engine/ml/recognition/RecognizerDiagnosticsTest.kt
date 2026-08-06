@@ -44,7 +44,7 @@ class RecognizerDiagnosticsTest {
     /** One pass with [stageMs] per stage, expressed in nanos. */
     private fun RecognizerDiagnostics.recordPass(stageMs: Long) {
         val ns = stageMs * 1_000_000L
-        record(0L, ns, 2 * ns, 3 * ns, 4 * ns, 5 * ns)
+        record(0L, ns, 2 * ns, 3 * ns, 4 * ns, 5 * ns, 6 * ns)
     }
 
     @Test
@@ -57,6 +57,7 @@ class RecognizerDiagnosticsTest {
         assertEquals(4.0, d.rotateMs, 1e-6)
         assertEquals(4.0, d.cropMs, 1e-6)
         assertEquals(4.0, d.alignMs, 1e-6)
+        assertEquals(4.0, d.preprocessMs, 1e-6)
         assertEquals(4.0, d.inferenceMs, 1e-6)
         assertEquals(1L, d.calls)
     }
@@ -69,7 +70,20 @@ class RecognizerDiagnosticsTest {
         d.recordPass(stageMs = 20)
 
         assertEquals(10 * 0.9 + 20 * 0.1, d.inferenceMs, 1e-6)
+        assertEquals(10 * 0.9 + 20 * 0.1, d.preprocessMs, 1e-6)
         assertEquals(2L, d.calls)
+    }
+
+    @Test
+    fun `preprocess and inference are separate buckets`() {
+        val d = diagnostics()
+        val ms = 1_000_000L
+
+        // align ends at 10ms, preprocess at 70ms, inference at 100ms.
+        d.record(0L, ms, 2 * ms, 3 * ms, 10 * ms, 70 * ms, 100 * ms)
+
+        assertEquals("preprocess is the align->fill span", 60.0, d.preprocessMs, 1e-6)
+        assertEquals("inference is Interpreter.run only", 30.0, d.inferenceMs, 1e-6)
     }
 
     @Test
@@ -119,6 +133,7 @@ class RecognizerDiagnosticsTest {
         assertEquals("no clock syscalls when disabled", 0, clock.nanoReads)
         assertEquals(0L, d.calls)
         assertEquals(0L, d.skips)
+        assertEquals(0.0, d.preprocessMs, 1e-6)
         assertEquals(0.0, d.inferenceMs, 1e-6)
         assertTrue(logs.isEmpty())
     }
@@ -132,6 +147,7 @@ class RecognizerDiagnosticsTest {
             d.recordPass(stageMs = 3)
 
             val line = logs.single()
+            assertTrue(line, line.contains("prep=3.0"))
             assertTrue(line, line.contains("infer=3.0"))
             assertTrue(line, line.all { it.code < 128 })
         } finally {

@@ -49,7 +49,7 @@ data class RecognitionConfig(
     val maxGallerySize: Int = 5,
     val duplicateSimilarity: Float = 0.95f,
     val minFaceCropPx: Int = 64,
-    val reVerifyIntervalFrames: Long = 60L,
+    val reVerifyIntervalFrames: Long = 5L,
     val mismatchesToRevoke: Int = 2,
     val minRecognitionIntervalMs: Long = 150L,
     val minFaceBoxPx: Int = 40,
