@@ -1,28 +1,16 @@
 package com.nash.engine.impl.di
 
 import android.content.Context
-import androidx.camera.core.CameraEffect
 import androidx.camera.core.ImageProxy
-import com.nash.core.model.AnonymizationModeHolder
-import com.nash.core.model.DetectorConfig
 import com.nash.core.model.FaceRecognizer
 import com.nash.core.model.KeepVisibleStateReader
 import com.nash.core.model.KeepVisibleStateStore
-import com.nash.core.model.OcSortConfig
 import com.nash.core.model.RecognitionConfig
-import com.nash.core.model.RenderBoxFeed
-import com.nash.core.model.TrackerConfig
 import com.nash.core.model.TrustedPersonStore
 import com.nash.engine.api.keepvisible.KeepVisibleController
 import com.nash.engine.api.keepvisible.KeepVisibleRecognizer
-import com.nash.engine.impl.DefaultAnonymizationPipeline
-import com.nash.engine.impl.factory.ImageProxyAnonymizationPipelineFactory
-import com.nash.engine.ml.recognition.MobileFaceNetRecognizer
 import com.nash.engine.recognition.KeepVisibleOrchestrator
 import com.nash.engine.recognition.SessionKeepVisibleStateStore
-import com.nash.engine.recognition.SessionTrustedPersonStore
-import com.nash.engine.render.AnonymizationCameraEffect
-import com.nash.engine.render.AnonymizingSurfaceProcessor
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -30,9 +18,14 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 
+/**
+ * Keep-visible policy bindings: the orchestrator, its two interface facets,
+ * and the session-scoped verification state store (split out of the former
+ * EngineImplModule — review fix: focused, cohesive DI modules).
+ */
 @Module
 @InstallIn(SingletonComponent::class)
-object EngineImplModule {
+object KeepVisibleModule {
 
     /**
      * The orchestrator is the single owner of keep-visible policy: the
@@ -87,65 +80,4 @@ object EngineImplModule {
     fun provideKeepVisibleStateReader(
         store: KeepVisibleStateStore,
     ): KeepVisibleStateReader = store
-
-    /**
-     * Construction and backend selection live in the factory (review fixes
-     * 12/13) — this provider only delegates. No `when` branching here.
-     */
-    @Provides
-    @Singleton
-    internal fun provideAnonymizationPipeline(
-        factory: ImageProxyAnonymizationPipelineFactory,
-    ): DefaultAnonymizationPipeline<ImageProxy> = factory.create()
-
-    @Provides
-    @Singleton
-    fun provideRenderBoxFeed(): RenderBoxFeed = RenderBoxFeed()
-
-    @Provides
-    @Singleton
-    fun provideAnonymizationModeHolder(): AnonymizationModeHolder = AnonymizationModeHolder()
-
-    @Provides
-    @Singleton
-    fun provideAnonymizingSurfaceProcessor(
-        renderBoxFeed: RenderBoxFeed,
-        modeHolder: AnonymizationModeHolder,
-    ): AnonymizingSurfaceProcessor = AnonymizingSurfaceProcessor(renderBoxFeed, modeHolder)
-
-    @Provides
-    @Singleton
-    fun provideAnonymizationEffect(
-        processor: AnonymizingSurfaceProcessor,
-    ): CameraEffect = AnonymizationCameraEffect(processor)
-
-    @Provides
-    @Singleton
-    fun provideOcSortConfig(): OcSortConfig = OcSortConfig()
-
-    @Provides
-    @Singleton
-    fun provideFaceRecognizer(
-        recognizer: MobileFaceNetRecognizer,
-    ): FaceRecognizer<ImageProxy> = recognizer
-
-    @Provides
-    @Singleton
-    fun provideTrustedPersonStore(config: RecognitionConfig): TrustedPersonStore =
-        SessionTrustedPersonStore(
-            maxGallerySize = config.maxGallerySize,
-            duplicateSimilarity = config.duplicateSimilarity,
-        )
-
-    @Provides
-    @Singleton
-    fun provideRecognitionConfig(): RecognitionConfig = RecognitionConfig()
-
-    @Provides
-    @Singleton
-    fun provideDetectorConfig(): DetectorConfig = DetectorConfig()
-
-    @Provides
-    @Singleton
-    fun provideTrackerConfig(): TrackerConfig = TrackerConfig()
 }

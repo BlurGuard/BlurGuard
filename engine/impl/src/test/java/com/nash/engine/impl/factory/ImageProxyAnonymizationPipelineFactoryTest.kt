@@ -7,6 +7,7 @@ import com.nash.core.model.DetectorConfig
 import com.nash.core.model.FrameMetadata
 import com.nash.core.model.PipelineStats
 import com.nash.core.model.RenderBoxFeed
+import com.nash.core.model.TimeProvider
 import com.nash.core.model.TrackedBox
 import com.nash.core.model.Tracker
 import com.nash.core.model.TrackerConfig
@@ -60,6 +61,11 @@ class ImageProxyAnonymizationPipelineFactoryTest {
         }
     }
 
+    private class FakeTimeProvider : TimeProvider {
+        override fun currentTimeMillis(): Long = 0L
+        override fun nanoTime(): Long = 0L
+    }
+
     /** Recognition is not exercised here; the pipeline only needs the seam. */
     private class NoopKeepVisibleRecognizer : KeepVisibleRecognizer<ImageProxy> {
         override suspend fun onDetectionFrame(
@@ -79,13 +85,16 @@ class ImageProxyAnonymizationPipelineFactoryTest {
         trackerFactory: FakeTrackerFactory,
     ): ImageProxyAnonymizationPipelineFactory =
         ImageProxyAnonymizationPipelineFactory(
-            detectorFactory = detectorFactory,
-            trackerFactory = trackerFactory,
-            detectorConfig = detectorConfig,
-            trackerConfig = trackerConfig,
-            renderBoxFeed = RenderBoxFeed(),
-            keepVisibleRecognizer = NoopKeepVisibleRecognizer(),
-            keepVisibleState = FakeKeepVisibleState(),
+            stageFactory = PipelineStageFactory(
+                detectorFactory = detectorFactory,
+                trackerFactory = trackerFactory,
+                detectorConfig = detectorConfig,
+                trackerConfig = trackerConfig,
+                renderBoxFeed = RenderBoxFeed(),
+                keepVisibleRecognizer = NoopKeepVisibleRecognizer(),
+                keepVisibleState = FakeKeepVisibleState(),
+            ),
+            timeProvider = FakeTimeProvider(),
         )
 
     @Test

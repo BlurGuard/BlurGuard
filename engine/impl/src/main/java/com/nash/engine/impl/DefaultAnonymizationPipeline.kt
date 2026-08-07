@@ -1,6 +1,5 @@
 package com.nash.engine.impl
 
-import com.nash.core.model.FrameConsumer
 import com.nash.core.model.FrameMetadata
 import com.nash.core.model.PipelineStats
 import com.nash.core.model.TrackedBox
@@ -23,7 +22,7 @@ import kotlinx.coroutines.flow.asStateFlow
  *
  * Generic over the frame type F, so the whole pipeline is unit-testable on
  * the JVM with fake frames (F = String in tests). No @Inject on purpose —
- * EngineImplModule constructs it, pinning the concrete F exactly once.
+ * ImageProxyAnonymizationPipelineFactory constructs it, pinning the concrete F exactly once.
  *
  * Concurrency contract: [onFrame] is called serially by the FrameSource on
  * the single-parallelism ml dispatcher, and the frame is only valid until
@@ -42,13 +41,13 @@ class DefaultAnonymizationPipeline<F> internal constructor(
     private val publisher: TrackedBoxPublisher,
     private val statsCollector: PipelineStatsCollector,
     private val clock: () -> Long = System::nanoTime,
-) : FrameConsumer<F> {
+) : AnonymizationPipeline<F> {
 
     /** Latest remapped tracked boxes. Conflated latest-wins state. */
-    val trackedBoxes: StateFlow<List<TrackedBox>> get() = publisher.trackedBoxes
+    override val trackedBoxes: StateFlow<List<TrackedBox>> get() = publisher.trackedBoxes
 
     /** Live pipeline performance counters (debug). */
-    val stats: StateFlow<PipelineStats> get() = statsCollector.stats
+    override val stats: StateFlow<PipelineStats> get() = statsCollector.stats
 
     private val _degraded = MutableStateFlow(false)
 
@@ -58,7 +57,7 @@ class DefaultAnonymizationPipeline<F> internal constructor(
      * never touch this — it describes detection health and stays latched
      * until the next detection pass reports clean.
      */
-    val degraded: StateFlow<Boolean> = _degraded.asStateFlow()
+    override val degraded: StateFlow<Boolean> = _degraded.asStateFlow()
 
     private val stages: List<PipelineStage> = listOf(
         scheduler,
@@ -86,7 +85,7 @@ class DefaultAnonymizationPipeline<F> internal constructor(
         statsCollector.onFrameProcessed(startNanos)
     }
 
-    fun reset() {
+    override fun reset() {
         stages.forEach(PipelineStage::reset)
         // Deliberately not folded into a stage: `degraded` belongs to the
         // orchestrator, the only component that knows a detection pass ran.
