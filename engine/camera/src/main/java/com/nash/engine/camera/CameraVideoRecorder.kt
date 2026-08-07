@@ -13,6 +13,7 @@ import com.nash.core.model.RecordingConfig
 import com.nash.core.model.RecordingStartResult
 import com.nash.core.model.RecordingState
 import com.nash.core.model.RecordingStopResult
+import com.nash.core.model.TimeProvider
 import com.nash.core.model.VideoRecorder
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.concurrent.Executor
@@ -40,6 +41,7 @@ class CameraVideoRecorder @Inject constructor(
     private val dispatcherProvider: DispatcherProvider,
     private val outputFactory: MediaStoreOutputFactory,
     private val errorMapper: RecordingErrorMapper,
+    private val timeProvider: TimeProvider,
 ) : VideoRecorder {
 
     private var recorder: Recorder? = null
@@ -135,7 +137,7 @@ class CameraVideoRecorder @Inject constructor(
                     when (event) {
                         is VideoRecordEvent.Start -> {
                             _recordingState.value = RecordingState.Recording(
-                                startedAtMillis = System.currentTimeMillis()
+                                startedAtMillis = timeProvider.currentTimeMillis()
                             )
                         }
 

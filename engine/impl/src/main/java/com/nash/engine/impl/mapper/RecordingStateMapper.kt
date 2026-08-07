@@ -1,12 +1,15 @@
 package com.nash.engine.impl.mapper
 
 import android.net.Uri
+import com.nash.core.model.TimeProvider
 import com.nash.engine.api.RecordingRequest
 import com.nash.engine.api.RecordingState
 import javax.inject.Inject
 import com.nash.core.model.RecordingState as CoreRecordingState
 
-class RecordingStateMapper @Inject constructor() {
+class RecordingStateMapper @Inject constructor(
+    private val timeProvider: TimeProvider,
+) {
     fun toApi(
         coreState: CoreRecordingState,
         request: RecordingRequest,
@@ -15,7 +18,7 @@ class RecordingStateMapper @Inject constructor() {
         is CoreRecordingState.Starting -> RecordingState.Starting(request)
         is CoreRecordingState.Recording -> RecordingState.Recording(
             request = request,
-            durationMillis = System.currentTimeMillis() - coreState.startedAtMillis,
+            durationMillis = timeProvider.currentTimeMillis() - coreState.startedAtMillis,
             sizeBytes = 0L,
         )
         is CoreRecordingState.Stopping -> RecordingState.Stopping(request)

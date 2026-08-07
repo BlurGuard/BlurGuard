@@ -4,6 +4,7 @@ import androidx.camera.core.ImageProxy
 import com.nash.core.model.DetectorConfig
 import com.nash.core.model.KeepVisibleStateReader
 import com.nash.core.model.RenderBoxFeed
+import com.nash.core.model.TimeProvider
 import com.nash.core.model.TrackerConfig
 import com.nash.engine.api.keepvisible.KeepVisibleRecognizer
 import com.nash.engine.impl.DefaultAnonymizationPipeline
@@ -36,12 +37,14 @@ internal class ImageProxyAnonymizationPipelineFactory @Inject constructor(
     private val renderBoxFeed: RenderBoxFeed,
     private val keepVisibleRecognizer: @JvmSuppressWildcards KeepVisibleRecognizer<ImageProxy>,
     private val keepVisibleState: KeepVisibleStateReader,
+    private val timeProvider: TimeProvider,
 ) : AnonymizationPipelineFactory<ImageProxy> {
 
     override fun create(): DefaultAnonymizationPipeline<ImageProxy> {
         // One shared clock for the pipeline AND the stats collector, so tests
-        // can drive both with a single fake clock.
-        val clock: () -> Long = System::nanoTime
+        // can drive both with a single fake clock. Time access goes through
+        // the injected TimeProvider (review fix: no direct System.nanoTime).
+        val clock: () -> Long = timeProvider::nanoTime
         return DefaultAnonymizationPipeline(
             scheduler = DetectionScheduler(),
             detectionRunner = DetectionRunner(detectorFactory.create(detectorConfig)),

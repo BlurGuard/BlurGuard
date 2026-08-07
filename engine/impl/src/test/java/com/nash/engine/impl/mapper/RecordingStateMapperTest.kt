@@ -1,5 +1,6 @@
 package com.nash.engine.impl.mapper
 
+import com.nash.core.model.TimeProvider
 import com.nash.engine.api.RecordingRequest
 import com.nash.engine.api.RecordingState
 import org.junit.Assert.assertEquals
@@ -9,7 +10,12 @@ import org.junit.Test
 import com.nash.core.model.RecordingState as CoreRecordingState
 
 class RecordingStateMapperTest {
-    private val mapper = RecordingStateMapper()
+    private class FixedTimeProvider(private val nowMillis: Long) : TimeProvider {
+        override fun currentTimeMillis(): Long = nowMillis
+        override fun nanoTime(): Long = nowMillis * 1_000_000L
+    }
+
+    private val mapper = RecordingStateMapper(FixedTimeProvider(nowMillis = 10_000L))
     private val request = RecordingRequest(includeAudio = true, outputFileName = "Clip")
 
     @Test
@@ -23,9 +29,9 @@ class RecordingStateMapperTest {
     }
 
     @Test
-    fun `maps recording state with elapsed duration`() {
+    fun `maps recording state with exact elapsed duration from fake time`() {
         val api = mapper.toApi(
-            CoreRecordingState.Recording(startedAtMillis = System.currentTimeMillis() - 1_000L),
+            CoreRecordingState.Recording(startedAtMillis = 4_000L),
             request,
         )
 
@@ -33,7 +39,7 @@ class RecordingStateMapperTest {
         api as RecordingState.Recording
 
         assertEquals(request, api.request)
-        assertTrue(api.durationMillis >= 1_000L)
+        assertEquals(6_000L, api.durationMillis)
         assertEquals(0L, api.sizeBytes)
     }
 

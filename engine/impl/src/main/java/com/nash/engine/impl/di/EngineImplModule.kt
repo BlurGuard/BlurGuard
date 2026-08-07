@@ -11,12 +11,14 @@ import com.nash.core.model.KeepVisibleStateStore
 import com.nash.core.model.OcSortConfig
 import com.nash.core.model.RecognitionConfig
 import com.nash.core.model.RenderBoxFeed
+import com.nash.core.model.TimeProvider
 import com.nash.core.model.TrackerConfig
 import com.nash.core.model.TrustedPersonStore
 import com.nash.engine.api.keepvisible.KeepVisibleController
 import com.nash.engine.api.keepvisible.KeepVisibleRecognizer
 import com.nash.engine.impl.AnonymizationPipeline
 import com.nash.engine.impl.factory.ImageProxyAnonymizationPipelineFactory
+import com.nash.engine.impl.time.SystemTimeProvider
 import com.nash.engine.ml.recognition.MobileFaceNetRecognizer
 import com.nash.engine.recognition.KeepVisibleOrchestrator
 import com.nash.engine.recognition.SessionKeepVisibleStateStore
@@ -97,6 +99,15 @@ object EngineImplModule {
     internal fun provideAnonymizationPipeline(
         factory: ImageProxyAnonymizationPipelineFactory,
     ): AnonymizationPipeline<ImageProxy> = factory.create()
+
+    /**
+     * Single source of time for engine orchestration and recording mapping
+     * (review fix: no direct System.currentTimeMillis/nanoTime in those
+     * paths). Tests never see this binding; they inject fakes directly.
+     */
+    @Provides
+    @Singleton
+    fun provideTimeProvider(): TimeProvider = SystemTimeProvider()
 
     @Provides
     @Singleton
