@@ -163,9 +163,7 @@ private fun CameraPreview(
     modifier: Modifier = Modifier
 ) {
     AndroidView(
-        factory = {
-            (previewTarget as PreviewTargetImpl).view
-        },
+        factory = { previewTarget.view },
         modifier = modifier
     )
 }
