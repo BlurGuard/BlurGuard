@@ -45,3 +45,5 @@ prompt.md
 *.log
 .fake
 
+/.artifacts/20260802-103016-3d6a1ef5-19bf-4b82-94f4-0421feba9170/implementation_plan.artifact.md
+/.artifacts/20260802-103016-3d6a1ef5-19bf-4b82-94f4-0421feba9170/walkthrough.artifact.md

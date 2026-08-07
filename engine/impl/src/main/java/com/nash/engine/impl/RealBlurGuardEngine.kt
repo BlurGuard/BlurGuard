@@ -37,7 +37,7 @@ class RealBlurGuardEngine @Inject constructor(
     private val cameraSession: CameraSessionController,
     private val videoRecorder: VideoRecorder,
     private val frameSource: @JvmSuppressWildcards FrameSource<ImageProxy>,
-    private val pipeline: DefaultAnonymizationPipeline<ImageProxy>,
+    private val pipeline: AnonymizationPipeline<ImageProxy>,
     private val keepVisibleState: KeepVisibleStateReader,
     private val modeHolder: AnonymizationModeHolder,
     private val keepVisibleController: KeepVisibleController

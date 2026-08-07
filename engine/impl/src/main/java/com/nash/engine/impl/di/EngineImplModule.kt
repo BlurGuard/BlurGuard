@@ -15,7 +15,7 @@ import com.nash.core.model.TrackerConfig
 import com.nash.core.model.TrustedPersonStore
 import com.nash.engine.api.keepvisible.KeepVisibleController
 import com.nash.engine.api.keepvisible.KeepVisibleRecognizer
-import com.nash.engine.impl.DefaultAnonymizationPipeline
+import com.nash.engine.impl.AnonymizationPipeline
 import com.nash.engine.impl.factory.ImageProxyAnonymizationPipelineFactory
 import com.nash.engine.ml.recognition.MobileFaceNetRecognizer
 import com.nash.engine.recognition.KeepVisibleOrchestrator
@@ -96,7 +96,7 @@ object EngineImplModule {
     @Singleton
     internal fun provideAnonymizationPipeline(
         factory: ImageProxyAnonymizationPipelineFactory,
-    ): DefaultAnonymizationPipeline<ImageProxy> = factory.create()
+    ): AnonymizationPipeline<ImageProxy> = factory.create()
 
     @Provides
     @Singleton
