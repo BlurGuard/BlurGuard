@@ -26,14 +26,11 @@ import com.nash.engine.camera.CameraSessionController
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.merge
 
 @Singleton
 class RealBlurGuardEngine @Inject constructor(
@@ -45,13 +42,6 @@ class RealBlurGuardEngine @Inject constructor(
     private val modeHolder: AnonymizationModeHolder,
     private val keepVisibleController: KeepVisibleController
 ) : BlurGuardEngine {
-
-    /**
-     * Direct emit channel for warnings that don't originate from a pipeline
-     * flow (e.g. storage, camera timeouts). Merged into [observeWarnings];
-     * future emit sites land here.
-     */
-    private val _warnings = MutableSharedFlow<EngineWarning>()
 
     override fun bind(
         lifecycleOwner: LifecycleOwner,
@@ -120,12 +110,9 @@ class RealBlurGuardEngine @Inject constructor(
         }
     }
 
-    override fun observeWarnings(): Flow<EngineWarning> = merge(
-        _warnings.asSharedFlow(),
-        pipeline.degraded
-            .filter { it }
-            .map { EngineWarning.DetectionDegraded },
-    )
+    override fun observeWarnings(): Flow<EngineWarning> = pipeline.degraded
+        .filter { it }
+        .map { EngineWarning.DetectionDegraded }
 
     override val trackedBoxes: StateFlow<List<TrackedBox>>
         get() = pipeline.trackedBoxes
