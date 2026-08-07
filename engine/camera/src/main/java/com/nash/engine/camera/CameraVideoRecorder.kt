@@ -18,6 +18,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.concurrent.Executor
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -47,6 +48,8 @@ class CameraVideoRecorder @Inject constructor(
     private var activeRecording: Recording? = null
 
     private var finalizeResult: CompletableDeferred<RecordingStopResult>? = null
+
+    private val errorMapper = RecordingErrorMapper()
 
     private val _recordingState = MutableStateFlow<RecordingState>(RecordingState.Idle)
     override val recordingState: Flow<RecordingState> = _recordingState.asStateFlow()
@@ -93,8 +96,6 @@ class CameraVideoRecorder @Inject constructor(
             cause = cause
         )
     }
-
-
 
     @SuppressLint("MissingPermission")
     override suspend fun startRecording(config: RecordingConfig): RecordingStartResult {
@@ -166,12 +167,14 @@ class CameraVideoRecorder @Inject constructor(
                 }
 
                 RecordingStartResult.Started
-            } catch (e: Exception) {
-                _recordingState.value = RecordingState.Error(
-                    message = e.message ?: "Failed to start recording",
-                    cause = e
-                )
-                RecordingStartResult.Failure(e.message ?: "Failed to start recording", e)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: SecurityException) {
+                errorMapper.startFailure(e).also(::publishStartFailure)
+            } catch (e: IllegalStateException) {
+                errorMapper.startFailure(e).also(::publishStartFailure)
+            } catch (e: IllegalArgumentException) {
+                errorMapper.startFailure(e).also(::publishStartFailure)
             }
         }
     }
@@ -189,9 +192,18 @@ class CameraVideoRecorder @Inject constructor(
                     ?: RecordingStopResult.Failure("Recording did not finalize")
                 finalizeResult = null
                 result
-            } catch (e: Exception) {
-                RecordingStopResult.Failure(e.message ?: "Failed to stop recording", e)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: IllegalStateException) {
+                errorMapper.stopFailure(e)
             }
         }
+    }
+
+    private fun publishStartFailure(failure: RecordingStartResult.Failure) {
+        _recordingState.value = RecordingState.Error(
+            message = failure.message,
+            cause = failure.cause
+        )
     }
 }
