@@ -95,7 +95,8 @@ fun CameraRoute(
             onModeClick = { viewModel.onModeClicked() },
             onFaceTapped = { viewModel.onFaceTapped(it) },
             onRevokeAllKeepVisible = { viewModel.onRevokeAllKeepVisible() },
-            onKeepVisibleMessageShown = { viewModel.onKeepVisibleMessageShown() }
+            onKeepVisibleMessageShown = { viewModel.onKeepVisibleMessageShown() },
+            onSettingsClick = { /* Placeholder for future Settings screen */ }
         )
     }
 

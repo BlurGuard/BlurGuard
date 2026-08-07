@@ -11,6 +11,7 @@
     <string name="camera_recording_indicator">● تسجيل %1$s</string>
     <string name="camera_record_button_label">تسجيل</string>
     <string name="camera_permission_required">إذن الكاميرا مطلوب لتسجيل الفيديو.</string>
+    <string name="camera_settings_description">فتح الإعدادات</string>
 
     <!-- Engine warnings -->
     <string name="warning_ml_init_failed">تعذّر بدء الكشف. قد لا يتم تمويه الوجوه واللوحات.</string>

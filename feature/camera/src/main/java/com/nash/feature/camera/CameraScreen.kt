@@ -15,7 +15,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -129,7 +133,7 @@ private fun CameraContent(
         } else {
             CameraPreviewLayer(
                 state = state,
-                previewTarget = previewTarget,
+                previewView = previewTarget.view,
                 actions = actions
             )
             CameraDebugLayer(
@@ -147,11 +151,11 @@ private fun CameraContent(
 @Composable
 private fun CameraPreviewLayer(
     state: CameraScreenState,
-    previewTarget: PreviewTarget,
+    previewView: android.view.View,
     actions: CameraScreenActions
 ) {
     CameraPreview(
-        previewTarget = previewTarget,
+        previewView = previewView,
         modifier = Modifier.fillMaxSize()
     )
 
@@ -196,6 +200,19 @@ private fun BoxScope.CameraControlLayer(
     state: CameraScreenState,
     actions: CameraScreenActions
 ) {
+    IconButton(
+        onClick = actions.onSettingsClick,
+        modifier = Modifier
+            .align(Alignment.TopStart)
+            .statusBarsPadding()
+            .padding(8.dp)
+    ) {
+        Icon(
+            imageVector = Icons.Default.Settings,
+            contentDescription = stringResource(R.string.camera_settings_description),
+            tint = LocalBlurGuardSemanticColors.current.overlayOnScrim
+        )
+    }
     KeepVisibleControls(
         keepVisible = state.keepVisible,
         onRevokeAll = actions.onRevokeAllKeepVisible,
@@ -226,11 +243,11 @@ private fun BoxScope.CameraControlLayer(
 
 @Composable
 private fun CameraPreview(
-    previewTarget: PreviewTarget,
+    previewView: android.view.View,
     modifier: Modifier = Modifier
 ) {
     AndroidView(
-        factory = { previewTarget.view },
+        factory = { previewView },
         modifier = modifier
     )
 }

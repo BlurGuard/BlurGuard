@@ -3,9 +3,12 @@ package com.nash.engine.camera
 import com.nash.core.model.RecordingStartResult
 import com.nash.core.model.RecordingStopResult
 import java.io.IOException
+import javax.inject.Inject
+import javax.inject.Singleton
 
 /** Maps recorder exceptions into stable domain failures. */
-internal class RecordingErrorMapper {
+@Singleton
+class RecordingErrorMapper @Inject constructor() {
 
     fun startFailure(error: Throwable): RecordingStartResult.Failure {
         return when (error) {
