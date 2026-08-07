@@ -3,7 +3,9 @@ package com.nash.feature.camera
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -57,104 +59,169 @@ fun CameraScreen(
     showDebugOverlays: Boolean = BuildConfig.DEBUG
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
+
+    CameraScreenEffects(
+        uiState = state.uiState,
+        snackbarHostState = snackbarHostState,
+        actions = actions
+    )
+
+    Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) }
+    ) { paddingValues ->
+        CameraContent(
+            state = state,
+            previewTarget = previewTarget,
+            actions = actions,
+            showDebugOverlays = showDebugOverlays,
+            paddingValues = paddingValues
+        )
+    }
+}
+
+@Composable
+private fun CameraScreenEffects(
+    uiState: CameraUiState,
+    snackbarHostState: SnackbarHostState,
+    actions: CameraScreenActions
+) {
     val context = LocalContext.current
-    LaunchedEffect(state.uiState.errorMessage) {
-        state.uiState.errorMessage?.let { message ->
+    LaunchedEffect(uiState.errorMessage) {
+        uiState.errorMessage?.let { message ->
             snackbarHostState.showSnackbar(message)
             actions.onDismissError()
         }
     }
 
-    LaunchedEffect(state.uiState.errorMessageRes) {
-        state.uiState.errorMessageRes?.let { messageRes ->
+    LaunchedEffect(uiState.errorMessageRes) {
+        uiState.errorMessageRes?.let { messageRes ->
             snackbarHostState.showSnackbar(context.getString(messageRes))
             actions.onDismissError()
         }
     }
 
-    LaunchedEffect(state.uiState.keepVisibleMessage) {
-        state.uiState.keepVisibleMessage?.let { messageRes ->
+    LaunchedEffect(uiState.keepVisibleMessage) {
+        uiState.keepVisibleMessage?.let { messageRes ->
             snackbarHostState.showSnackbar(context.getString(messageRes))
             actions.onKeepVisibleMessageShown()
         }
     }
+}
 
-    Scaffold(
-        snackbarHost = { SnackbarHost(snackbarHostState) }
-    ) { paddingValues ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-        ) {
-            if (!state.uiState.cameraPermissionGranted) {
-                PermissionRationale(
-                    onRequestPermissions = actions.onRequestPermissions,
-                    modifier = Modifier.align(Alignment.Center)
-                )
-            } else {
-                CameraPreview(
-                    previewTarget = previewTarget,
-                    modifier = Modifier.fillMaxSize()
-                )
-
-                // Single tap owner: always active (keep-visible enrollment is a
-                // release feature) and renders nothing. Shares the preview's
-                // exact bounds so tap coordinates line up. Controls and chips
-                // are placed later in this Box, so they hit-test above it and
-                // stay clickable.
-                FaceTapTargets(
-                    trackedBoxes = state.trackedBoxes,
-                    onFaceTapped = actions.onFaceTapped,
-                    modifier = Modifier.fillMaxSize()
-                )
-
-                if (showDebugOverlays) {
-                    // Purely visual debug overlay — no pointer handling, so taps
-                    // pass through it to FaceTapTargets underneath.
-                    TrackingOverlay(
-                        trackedBoxes = state.trackedBoxes,
-                        verifications = state.keepVisible,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                    PipelineDebugHud(
-                        stats = state.stats,
-                        debugStats = state.debugStats,
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .statusBarsPadding()
-                            .padding(8.dp)
-                    )
-                }
-                KeepVisibleControls(
-                    keepVisible = state.keepVisible,
-                    onRevokeAll = actions.onRevokeAllKeepVisible,
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(top = 16.dp)
-                )
-                RecordingOverlay(
-                    uiState = state.uiState,
-                    modifier = Modifier.align(Alignment.TopCenter)
-                )
-                ModeChip(
-                    mode = state.mode,
-                    onClick = actions.onModeClick,
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .statusBarsPadding()
-                        .padding(8.dp)
-                )
-                Controls(
-                    isRecording = state.uiState.isRecording,
-                    isBusy = state.uiState.isStartingOrStopping,
-                    onRecordClick = actions.onRecordClick,
-                    onStopClick = actions.onStopClick,
-                    modifier = Modifier.align(Alignment.BottomCenter)
-                )
-            }
+@Composable
+private fun CameraContent(
+    state: CameraScreenState,
+    previewTarget: PreviewTarget,
+    actions: CameraScreenActions,
+    showDebugOverlays: Boolean,
+    paddingValues: PaddingValues
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(paddingValues)
+    ) {
+        if (!state.uiState.cameraPermissionGranted) {
+            PermissionRationale(
+                onRequestPermissions = actions.onRequestPermissions,
+                modifier = Modifier.align(Alignment.Center)
+            )
+        } else {
+            CameraPreviewLayer(
+                state = state,
+                previewTarget = previewTarget,
+                actions = actions
+            )
+            CameraDebugLayer(
+                state = state,
+                showDebugOverlays = showDebugOverlays
+            )
+            CameraControlLayer(
+                state = state,
+                actions = actions
+            )
         }
     }
+}
+
+@Composable
+private fun CameraPreviewLayer(
+    state: CameraScreenState,
+    previewTarget: PreviewTarget,
+    actions: CameraScreenActions
+) {
+    CameraPreview(
+        previewTarget = previewTarget,
+        modifier = Modifier.fillMaxSize()
+    )
+
+    // Single tap owner: always active (keep-visible enrollment is a
+    // release feature) and renders nothing. Shares the preview's
+    // exact bounds so tap coordinates line up. Controls and chips
+    // are placed later in this Box, so they hit-test above it and
+    // stay clickable.
+    FaceTapTargets(
+        trackedBoxes = state.trackedBoxes,
+        onFaceTapped = actions.onFaceTapped,
+        modifier = Modifier.fillMaxSize()
+    )
+}
+
+@Composable
+private fun BoxScope.CameraDebugLayer(
+    state: CameraScreenState,
+    showDebugOverlays: Boolean
+) {
+    if (!showDebugOverlays) return
+
+    // Purely visual debug overlay — no pointer handling, so taps
+    // pass through it to FaceTapTargets underneath.
+    TrackingOverlay(
+        trackedBoxes = state.trackedBoxes,
+        verifications = state.keepVisible,
+        modifier = Modifier.fillMaxSize()
+    )
+    PipelineDebugHud(
+        stats = state.stats,
+        debugStats = state.debugStats,
+        modifier = Modifier
+            .align(Alignment.TopStart)
+            .statusBarsPadding()
+            .padding(8.dp)
+    )
+}
+
+@Composable
+private fun BoxScope.CameraControlLayer(
+    state: CameraScreenState,
+    actions: CameraScreenActions
+) {
+    KeepVisibleControls(
+        keepVisible = state.keepVisible,
+        onRevokeAll = actions.onRevokeAllKeepVisible,
+        modifier = Modifier
+            .align(Alignment.TopCenter)
+            .padding(top = 16.dp)
+    )
+    RecordingOverlay(
+        uiState = state.uiState,
+        modifier = Modifier.align(Alignment.TopCenter)
+    )
+    ModeChip(
+        mode = state.mode,
+        onClick = actions.onModeClick,
+        modifier = Modifier
+            .align(Alignment.TopEnd)
+            .statusBarsPadding()
+            .padding(8.dp)
+    )
+    Controls(
+        isRecording = state.uiState.isRecording,
+        isBusy = state.uiState.isStartingOrStopping,
+        onRecordClick = actions.onRecordClick,
+        onStopClick = actions.onStopClick,
+        modifier = Modifier.align(Alignment.BottomCenter)
+    )
 }
 
 @Composable
