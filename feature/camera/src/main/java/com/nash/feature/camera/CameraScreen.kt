@@ -1,5 +1,6 @@
 package com.nash.feature.camera
 
+import android.view.View
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -151,7 +152,7 @@ private fun CameraContent(
 @Composable
 private fun CameraPreviewLayer(
     state: CameraScreenState,
-    previewView: android.view.View,
+    previewView: View,
     actions: CameraScreenActions
 ) {
     CameraPreview(
@@ -191,7 +192,7 @@ private fun BoxScope.CameraDebugLayer(
         modifier = Modifier
             .align(Alignment.TopStart)
             .statusBarsPadding()
-            .padding(8.dp)
+            .padding(top = 56.dp, start = 8.dp)
     )
 }
 
@@ -243,7 +244,7 @@ private fun BoxScope.CameraControlLayer(
 
 @Composable
 private fun CameraPreview(
-    previewView: android.view.View,
+    previewView: View,
     modifier: Modifier = Modifier
 ) {
     AndroidView(

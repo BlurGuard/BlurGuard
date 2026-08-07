@@ -10,7 +10,7 @@ import javax.inject.Singleton
 @Singleton
 class RecordingErrorMapper @Inject constructor() {
 
-    fun startFailure(error: Throwable): RecordingStartResult.Failure {
+    fun startFailure(error: Exception): RecordingStartResult.Failure {
         return when (error) {
             is SecurityException -> RecordingStartResult.Failure(
                 message = "Missing permission to start recording",
@@ -39,7 +39,7 @@ class RecordingErrorMapper @Inject constructor() {
         }
     }
 
-    fun stopFailure(error: Throwable): RecordingStopResult.Failure {
+    fun stopFailure(error: Exception): RecordingStopResult.Failure {
         return when (error) {
             is IllegalStateException -> RecordingStopResult.Failure(
                 message = error.message ?: "Recorder is not ready to stop",

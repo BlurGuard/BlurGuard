@@ -14,3 +14,4 @@ data class CameraScreenActions(
     val onKeepVisibleMessageShown: () -> Unit,
     val onSettingsClick: () -> Unit
 )
+
