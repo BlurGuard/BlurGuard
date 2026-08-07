@@ -4,9 +4,11 @@ import androidx.camera.core.ImageProxy
 import com.nash.core.model.FrameSource
 import com.nash.core.model.VideoRecorder
 import com.nash.engine.camera.AnalysisFrameSource
+import com.nash.engine.camera.CameraExecutorProvider
 import com.nash.engine.camera.CameraSessionController
 import com.nash.engine.camera.CameraVideoRecorder
 import com.nash.engine.camera.CameraXSessionFacade
+import com.nash.engine.camera.SingleThreadCameraExecutorProvider
 import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
@@ -43,4 +45,10 @@ abstract class CameraBindingsModule {
     abstract fun bindFrameSource(
         source: AnalysisFrameSource
     ): @JvmSuppressWildcards FrameSource<ImageProxy>
+
+    @Binds
+    @Singleton
+    abstract fun bindCameraExecutorProvider(
+        provider: SingleThreadCameraExecutorProvider
+    ): CameraExecutorProvider
 }

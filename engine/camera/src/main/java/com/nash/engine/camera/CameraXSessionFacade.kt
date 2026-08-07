@@ -11,8 +11,6 @@ import androidx.camera.view.PreviewView
 import androidx.lifecycle.LifecycleOwner
 import com.nash.core.common.DispatcherProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
@@ -32,6 +30,7 @@ import kotlinx.coroutines.withContext
  * - [CameraVideoRecorder]     — Recorder/Recording lifecycle + RecordingState
  * - [MediaStoreOutputFactory] — output options + safe filenames (via the recorder)
  * - [CameraPreviewViewFactory] — PreviewView creation/validation
+ * - [CameraExecutorProvider]  — camera/recorder callback executor lifecycle
  *
  * VideoCapture is bound inside a UseCaseGroup carrying the anonymization
  * CameraEffect, so preview AND recording consume processed output only.
@@ -52,13 +51,13 @@ class CameraXSessionFacade @Inject constructor(
     private val frameSource: AnalysisFrameSource,
     private val videoRecorder: CameraVideoRecorder,
     private val previewViewFactory: CameraPreviewViewFactory,
+    private val executorProvider: CameraExecutorProvider,
 ) : CameraSessionController {
 
     private val facadeScope = CoroutineScope(
         SupervisorJob() + dispatcherProvider.io
     )
 
-    private val cameraExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val cameraProviderFuture by lazy {
         ProcessCameraProvider.getInstance(context)
     }
@@ -106,6 +105,7 @@ class CameraXSessionFacade @Inject constructor(
                     .also { previewUseCase = it }
                 attachSurfaceProviderIfReady()
 
+                val cameraExecutor = executorProvider.executor
                 val recorder = useCaseFactory.createRecorder(cameraExecutor)
                 videoRecorder.attach(recorder, cameraExecutor)
                 val videoCapture = useCaseFactory.createVideoCapture(recorder)
@@ -151,7 +151,7 @@ class CameraXSessionFacade @Inject constructor(
         facadeScope.launch(dispatcherProvider.main) {
             releaseSession()
             frameSource.shutdown()
-            cameraExecutor.shutdown()
+            executorProvider.shutdown()
             facadeScope.cancel()
         }
     }
