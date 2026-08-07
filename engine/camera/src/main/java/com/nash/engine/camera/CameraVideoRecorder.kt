@@ -18,6 +18,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.concurrent.Executor
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -38,6 +39,7 @@ class CameraVideoRecorder @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val dispatcherProvider: DispatcherProvider,
     private val outputFactory: MediaStoreOutputFactory,
+    private val errorMapper: RecordingErrorMapper,
 ) : VideoRecorder {
 
     private var recorder: Recorder? = null
@@ -70,17 +72,16 @@ class CameraVideoRecorder @Inject constructor(
     /**
      * Best-effort stop used during unbind/shutdown.
      *
-     * [finalizeResult] is intentionally NOT cleared here: the Finalize event
-     * still fires for a quietly-stopped recording and completes it, so a
-     * concurrent [stopRecording] caller gets a real result instead of hanging
-     * or mis-reporting.
+     * Keep [finalizeResult] so any concurrent [stopRecording] caller receives
+     * the camera finalize result instead of hanging or getting a synthetic error.
      */
     fun cancelActiveRecordingQuietly() {
         try {
             activeRecording?.stop()
             activeRecording?.close()
         } catch (_: Exception) {
-            // Best-effort cleanup; the finalize event reports any real error.
+            // Best-effort cleanup during unbind/shutdown; the Finalize event reports
+            // real recording errors to any active stopRecording caller.
         } finally {
             activeRecording = null
         }
@@ -93,8 +94,6 @@ class CameraVideoRecorder @Inject constructor(
             cause = cause
         )
     }
-
-
 
     @SuppressLint("MissingPermission")
     override suspend fun startRecording(config: RecordingConfig): RecordingStartResult {
@@ -125,8 +124,7 @@ class CameraVideoRecorder @Inject constructor(
                     pendingRecording = try {
                         pendingRecording.withAudioEnabled()
                     } catch (_: SecurityException) {
-                        // Audio permission was revoked between check and record; fall back
-                        // to video-only rather than crashing.
+                        // Audio permission was revoked after the check; record video-only.
                         pendingRecording
                     }
                 }
@@ -166,12 +164,10 @@ class CameraVideoRecorder @Inject constructor(
                 }
 
                 RecordingStartResult.Started
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                _recordingState.value = RecordingState.Error(
-                    message = e.message ?: "Failed to start recording",
-                    cause = e
-                )
-                RecordingStartResult.Failure(e.message ?: "Failed to start recording", e)
+                errorMapper.startFailure(e).also(::publishStartFailure)
             }
         }
     }
@@ -189,9 +185,27 @@ class CameraVideoRecorder @Inject constructor(
                     ?: RecordingStopResult.Failure("Recording did not finalize")
                 finalizeResult = null
                 result
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                RecordingStopResult.Failure(e.message ?: "Failed to stop recording", e)
+                errorMapper.stopFailure(e).also(::publishStopFailure)
             }
         }
+    }
+
+    private fun publishStartFailure(failure: RecordingStartResult.Failure): RecordingStartResult.Failure {
+        _recordingState.value = RecordingState.Error(
+            message = failure.message,
+            cause = failure.cause
+        )
+        return failure
+    }
+
+    private fun publishStopFailure(failure: RecordingStopResult.Failure): RecordingStopResult.Failure {
+        _recordingState.value = RecordingState.Error(
+            message = failure.message,
+            cause = failure.cause
+        )
+        return failure
     }
 }

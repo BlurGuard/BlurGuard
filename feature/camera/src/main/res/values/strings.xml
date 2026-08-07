@@ -11,6 +11,7 @@
     <string name="camera_recording_indicator">● REC %1$s</string>
     <string name="camera_record_button_label">REC</string>
     <string name="camera_permission_required">Camera permission is required to record video.</string>
+    <string name="camera_settings_description">Open settings</string>
 
     <!-- Engine warnings -->
     <string name="warning_ml_init_failed">Detection could not start. Faces and plates may not be anonymized.</string>

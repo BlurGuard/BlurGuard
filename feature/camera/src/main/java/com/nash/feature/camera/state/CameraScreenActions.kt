@@ -11,5 +11,7 @@ data class CameraScreenActions(
     val onModeClick: () -> Unit,
     val onFaceTapped: (TrackId) -> Unit,
     val onRevokeAllKeepVisible: () -> Unit,
-    val onKeepVisibleMessageShown: () -> Unit
+    val onKeepVisibleMessageShown: () -> Unit,
+    val onSettingsClick: () -> Unit
 )
+
