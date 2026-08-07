@@ -2,12 +2,10 @@ package com.nash.engine.impl
 
 import androidx.camera.core.ImageProxy
 import androidx.lifecycle.LifecycleOwner
-import com.nash.core.model.AnonymizationModeEnum
 import com.nash.core.model.AnonymizationModeHolder
 import com.nash.core.model.FrameSource
 import com.nash.core.model.KeepVisibleStateReader
 import com.nash.core.model.PipelineStats
-import com.nash.core.model.RecordingConfig
 import com.nash.core.model.RecordingStartResult
 import com.nash.core.model.TrackId
 import com.nash.core.model.TrackVerification
@@ -23,6 +21,9 @@ import com.nash.engine.api.RecordingState
 import com.nash.engine.api.TrustedFaceRef
 import com.nash.engine.api.keepvisible.KeepVisibleController
 import com.nash.engine.camera.CameraSessionController
+import com.nash.engine.impl.mapper.AnonymizationModeMapper
+import com.nash.engine.impl.mapper.RecordingRequestMapper
+import com.nash.engine.impl.mapper.RecordingStateMapper
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
@@ -40,7 +41,10 @@ class RealBlurGuardEngine @Inject constructor(
     private val pipeline: AnonymizationPipeline<ImageProxy>,
     private val keepVisibleState: KeepVisibleStateReader,
     private val modeHolder: AnonymizationModeHolder,
-    private val keepVisibleController: KeepVisibleController
+    private val keepVisibleController: KeepVisibleController,
+    private val recordingRequestMapper: RecordingRequestMapper,
+    private val recordingStateMapper: RecordingStateMapper,
+    private val anonymizationModeMapper: AnonymizationModeMapper
 ) : BlurGuardEngine {
 
     override fun bind(
@@ -49,7 +53,7 @@ class RealBlurGuardEngine @Inject constructor(
         config: EngineConfig
     ) {
         // Apply initial config before frames start flowing.
-        modeHolder.set(config.initialMode.toCore())
+        modeHolder.set(anonymizationModeMapper.toCore(config.initialMode))
         config.initialTrustedFaces.forEach { keepVisibleController.requestKeepVisible(it.trackId) }
 
         // Every session starts from clean tracking/stats/keep-visible state.
@@ -63,32 +67,14 @@ class RealBlurGuardEngine @Inject constructor(
     }
 
     override fun startRecording(request: RecordingRequest): Flow<RecordingState> = flow {
-        val result = videoRecorder.startRecording(
-            RecordingConfig(
-                includeAudio = request.includeAudio,
-                fileNamePrefix = request.outputFileName ?: "BlurGuard"
-            )
-        )
+        val result = videoRecorder.startRecording(recordingRequestMapper.toCore(request))
         when (result) {
             is RecordingStartResult.Failure -> {
                 emit(RecordingState.Error(result.message, result.cause))
             }
             is RecordingStartResult.Started -> {
                 emitAll(videoRecorder.recordingState.map { coreState ->
-                    when (coreState) {
-                        is com.nash.core.model.RecordingState.Idle -> RecordingState.Idle
-                        is com.nash.core.model.RecordingState.Starting -> RecordingState.Starting(request)
-                        is com.nash.core.model.RecordingState.Recording -> RecordingState.Recording(
-                            request = request,
-                            durationMillis = System.currentTimeMillis() - coreState.startedAtMillis,
-                            sizeBytes = 0L // Core doesn't provide size yet
-                        )
-                        is com.nash.core.model.RecordingState.Stopping -> RecordingState.Stopping(request)
-                        is com.nash.core.model.RecordingState.Saved ->
-                            RecordingState.Saved(android.net.Uri.parse(coreState.uri))
-                        is com.nash.core.model.RecordingState.Error ->
-                            RecordingState.Error(coreState.message, coreState.cause)
-                    }
+                    recordingStateMapper.toApi(coreState, request)
                 })
             }
         }
@@ -99,7 +85,7 @@ class RealBlurGuardEngine @Inject constructor(
     }
 
     override suspend fun updateAnonymizationMode(mode: AnonymizationMode) {
-        modeHolder.set(mode.toCore())
+        modeHolder.set(anonymizationModeMapper.toCore(mode))
     }
 
     override suspend fun updateTrustedFaces(faces: List<TrustedFaceRef>) {
@@ -122,12 +108,4 @@ class RealBlurGuardEngine @Inject constructor(
 
     override val stats: StateFlow<PipelineStats>
         get() = pipeline.stats
-}
-
-/** Maps the public engine-api mode to the core renderer mode. */
-private fun AnonymizationMode.toCore(): AnonymizationModeEnum = when (this) {
-    AnonymizationMode.BOUNDING -> AnonymizationModeEnum.BOUNDING
-    AnonymizationMode.BLUR -> AnonymizationModeEnum.BLUR
-    AnonymizationMode.PIXELATE -> AnonymizationModeEnum.PIXELATE
-    AnonymizationMode.BLACK_BOX -> AnonymizationModeEnum.BLACKBOX
 }
