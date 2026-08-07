@@ -3,7 +3,7 @@ package com.nash.engine.impl.di
 import androidx.camera.core.CameraEffect
 import com.nash.core.model.AnonymizationModeHolder
 import com.nash.core.model.RenderBoxFeed
-import com.nash.engine.render.AnonymizationCameraEffect
+import com.nash.engine.render.AnonymizationEffectFactory
 import com.nash.engine.render.AnonymizingSurfaceProcessor
 import dagger.Module
 import dagger.Provides
@@ -36,9 +36,10 @@ object RenderModule {
         modeHolder: AnonymizationModeHolder,
     ): AnonymizingSurfaceProcessor = AnonymizingSurfaceProcessor(renderBoxFeed, modeHolder)
 
+    /** Construction lives in the render factory — this provider only delegates. */
     @Provides
     @Singleton
     fun provideAnonymizationEffect(
         processor: AnonymizingSurfaceProcessor,
-    ): CameraEffect = AnonymizationCameraEffect(processor)
+    ): CameraEffect = AnonymizationEffectFactory(processor).create()
 }

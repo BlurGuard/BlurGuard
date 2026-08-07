@@ -85,13 +85,15 @@ class ImageProxyAnonymizationPipelineFactoryTest {
         trackerFactory: FakeTrackerFactory,
     ): ImageProxyAnonymizationPipelineFactory =
         ImageProxyAnonymizationPipelineFactory(
-            detectorFactory = detectorFactory,
-            trackerFactory = trackerFactory,
-            detectorConfig = detectorConfig,
-            trackerConfig = trackerConfig,
-            renderBoxFeed = RenderBoxFeed(),
-            keepVisibleRecognizer = NoopKeepVisibleRecognizer(),
-            keepVisibleState = FakeKeepVisibleState(),
+            stageFactory = PipelineStageFactory(
+                detectorFactory = detectorFactory,
+                trackerFactory = trackerFactory,
+                detectorConfig = detectorConfig,
+                trackerConfig = trackerConfig,
+                renderBoxFeed = RenderBoxFeed(),
+                keepVisibleRecognizer = NoopKeepVisibleRecognizer(),
+                keepVisibleState = FakeKeepVisibleState(),
+            ),
             timeProvider = FakeTimeProvider(),
         )
 
