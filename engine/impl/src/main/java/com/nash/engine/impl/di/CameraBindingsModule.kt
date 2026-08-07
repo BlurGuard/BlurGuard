@@ -17,9 +17,10 @@ import javax.inject.Singleton
  * Binds the engine camera contracts to their single implementations.
  *
  * VideoRecorder and FrameSource are bound to the leaf classes that actually
- * own the behavior (the facade merely delegates to the same singletons), and
- * the session surface is bound to the facade. Exactly one binding exists for
- * each contract.
+ * own the behavior, and the session surface is bound to the facade, which
+ * implements only CameraSessionController. Exactly one binding exists for
+ * each contract, so no consumer can reach recording or frame APIs through
+ * the session controller.
  */
 @Module
 @InstallIn(SingletonComponent::class)

@@ -5,14 +5,11 @@ import android.view.View
 import androidx.camera.core.CameraEffect
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.lifecycle.LifecycleOwner
 import com.nash.core.common.DispatcherProvider
-import com.nash.core.model.FrameSource
-import com.nash.core.model.VideoRecorder
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -41,9 +38,10 @@ import kotlinx.coroutines.withContext
  * engine/camera remains the only video-writing module, and raw frames or
  * surfaces never leave it.
  *
- * Public contracts [VideoRecorder] and [FrameSource] are implemented by
- * delegation to their owning collaborators, and the session surface is
- * exposed through [CameraSessionController].
+ * The facade exposes only the [CameraSessionController] session surface.
+ * The public `VideoRecorder` and `FrameSource` contracts are bound directly
+ * to [CameraVideoRecorder] and [AnalysisFrameSource] in DI, so no consumer
+ * can reach recording or frame APIs through the session controller.
  */
 @Singleton
 class CameraXSessionFacade @Inject constructor(
@@ -54,9 +52,7 @@ class CameraXSessionFacade @Inject constructor(
     private val frameSource: AnalysisFrameSource,
     private val videoRecorder: CameraVideoRecorder,
     private val previewViewFactory: CameraPreviewViewFactory,
-) : CameraSessionController,
-    VideoRecorder by videoRecorder,
-    FrameSource<ImageProxy> by frameSource {
+) : CameraSessionController {
 
     private val facadeScope = CoroutineScope(
         SupervisorJob() + dispatcherProvider.io
