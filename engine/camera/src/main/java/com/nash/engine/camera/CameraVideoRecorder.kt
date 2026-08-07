@@ -73,10 +73,8 @@ class CameraVideoRecorder @Inject constructor(
     /**
      * Best-effort stop used during unbind/shutdown.
      *
-     * [finalizeResult] is intentionally NOT cleared here: the Finalize event
-     * still fires for a quietly-stopped recording and completes it, so a
-     * concurrent [stopRecording] caller gets a real result instead of hanging
-     * or mis-reporting.
+     * Keep [finalizeResult] so any concurrent [stopRecording] caller receives
+     * the camera finalize result instead of hanging or getting a synthetic error.
      */
     fun cancelActiveRecordingQuietly() {
         try {
@@ -126,8 +124,7 @@ class CameraVideoRecorder @Inject constructor(
                     pendingRecording = try {
                         pendingRecording.withAudioEnabled()
                     } catch (_: SecurityException) {
-                        // Audio permission was revoked between check and record; fall back
-                        // to video-only rather than crashing.
+                        // Audio permission was revoked after the check; record video-only.
                         pendingRecording
                     }
                 }
