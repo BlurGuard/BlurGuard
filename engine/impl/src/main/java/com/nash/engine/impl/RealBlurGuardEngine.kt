@@ -81,7 +81,14 @@ class RealBlurGuardEngine @Inject constructor(
     }
 
     override suspend fun stopRecording() {
-        videoRecorder.stopRecording()
+        // Stop outcomes are intentionally consumed through the recording
+        // state flow, not this direct return value: CameraVideoRecorder
+        // publishes both Saved and Failure outcomes into recordingState,
+        // which startRecording() maps into the public RecordingState flow
+        // the UI is already collecting. Returning the result here as well
+        // would create two competing sources of truth for the same event.
+        @Suppress("UNUSED_VARIABLE")
+        val ignoredBecauseRecordingStateFlowIsSourceOfTruth = videoRecorder.stopRecording()
     }
 
     override suspend fun updateAnonymizationMode(mode: AnonymizationMode) {
