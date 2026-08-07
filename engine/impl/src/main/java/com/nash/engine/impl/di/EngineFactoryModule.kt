@@ -17,7 +17,7 @@ import dagger.hilt.components.SingletonComponent
  * [DetectorFactory]<ImageProxy> is consumed through the interface by the
  * pipeline factory, and [TrackerFactory] likewise. The pipeline factory is
  * injected by its concrete class (ImageProxyAnonymizationPipelineFactory)
- * from EngineImplModule, so its interface stays Hilt-free — the
+ * from PipelineModule, so its interface stays Hilt-free — the
  * [com.nash.engine.impl.factory.AnonymizationPipelineFactory] interface
  * exists for tests only.
  *

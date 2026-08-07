@@ -22,7 +22,7 @@ import kotlinx.coroutines.flow.asStateFlow
  *
  * Generic over the frame type F, so the whole pipeline is unit-testable on
  * the JVM with fake frames (F = String in tests). No @Inject on purpose —
- * EngineImplModule constructs it, pinning the concrete F exactly once.
+ * ImageProxyAnonymizationPipelineFactory constructs it, pinning the concrete F exactly once.
  *
  * Concurrency contract: [onFrame] is called serially by the FrameSource on
  * the single-parallelism ml dispatcher, and the frame is only valid until
