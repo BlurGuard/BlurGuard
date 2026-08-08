@@ -5,9 +5,7 @@ import android.view.View
 import androidx.camera.core.CameraEffect
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.view.PreviewView
 import androidx.lifecycle.LifecycleOwner
 import com.nash.core.common.DispatcherProvider
 import javax.inject.Inject
@@ -26,7 +24,8 @@ import kotlinx.coroutines.launch
  * - [AnalysisFrameSource]     — analyzer, FrameMetadata, frame IDs, frame closing
  * - [CameraVideoRecorder]     — Recorder/Recording lifecycle + RecordingState
  * - [MediaStoreOutputFactory] — output options + safe filenames (via the recorder)
- * - [CameraPreviewViewFactory] — PreviewView creation/validation
+ * - [PreviewSurfaceAttacher]  — PreviewView/Preview state + surface attachment
+ *                               (creates/validates views via [CameraPreviewViewFactory])
  * - [CameraExecutorProvider]  — camera/recorder callback executor lifecycle
  * - [CameraProviderResolver]  — ProcessCameraProvider resolution (off main)
  *
@@ -47,7 +46,7 @@ class CameraXSessionFacade @Inject constructor(
     private val useCaseFactory: CameraUseCaseFactory,
     private val frameSource: AnalysisFrameSource,
     private val videoRecorder: CameraVideoRecorder,
-    private val previewViewFactory: CameraPreviewViewFactory,
+    private val surfaceAttacher: PreviewSurfaceAttacher,
     private val executorProvider: CameraExecutorProvider,
     private val providerResolver: CameraProviderResolver,
 ) : CameraSessionController {
@@ -57,22 +56,14 @@ class CameraXSessionFacade @Inject constructor(
     )
 
     private var cameraProvider: ProcessCameraProvider? = null
-    private var previewUseCase: Preview? = null
     private var imageAnalysisUseCase: ImageAnalysis? = null
 
-    @Volatile
-    private var previewView: PreviewView? = null
-
     override fun createPreviewView(context: Context): View {
-        return previewViewFactory.create(context).also { view ->
-            previewView = view
-            attachSurfaceProviderIfReady()
-        }
+        return surfaceAttacher.createPreviewView(context)
     }
 
     override fun attachPreviewView(view: View) {
-        previewView = previewViewFactory.requirePreviewView(view)
-        attachSurfaceProviderIfReady()
+        surfaceAttacher.attachPreviewView(view)
     }
 
     /**
@@ -94,8 +85,7 @@ class CameraXSessionFacade @Inject constructor(
                 releaseSession()
 
                 val preview = useCaseFactory.createPreview()
-                    .also { previewUseCase = it }
-                attachSurfaceProviderIfReady()
+                surfaceAttacher.setPreview(preview)
 
                 val cameraExecutor = executorProvider.executor
                 val recorder = useCaseFactory.createRecorder(cameraExecutor)
@@ -154,9 +144,8 @@ class CameraXSessionFacade @Inject constructor(
      *
      * [cameraProvider] is intentionally kept: ProcessCameraProvider is a
      * process-wide singleton that stays valid across rebinds.
-     * [previewView] is intentionally kept: the engine re-attaches the
-     * feature's PreviewTarget on every bind, and keeping the last view lets
-     * an unbind/rebind cycle without a new target still show a preview.
+     * The last PreviewView is intentionally kept by [surfaceAttacher]; only
+     * the per-session Preview use case is cleared here.
      */
     private fun releaseSession() {
         videoRecorder.cancelActiveRecordingQuietly()
@@ -164,12 +153,6 @@ class CameraXSessionFacade @Inject constructor(
         imageAnalysisUseCase?.let { frameSource.detachFrom(it) }
         cameraProvider?.unbindAll()
         imageAnalysisUseCase = null
-        previewUseCase = null
-    }
-
-    private fun attachSurfaceProviderIfReady() {
-        val view = previewView ?: return
-        val preview = previewUseCase ?: return
-        preview.surfaceProvider = view.surfaceProvider
+        surfaceAttacher.setPreview(null)
     }
 }
