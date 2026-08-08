@@ -1,13 +1,10 @@
 package com.nash.engine.camera
 
-import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
-import android.content.pm.PackageManager
 import androidx.camera.video.Recorder
 import androidx.camera.video.Recording
 import androidx.camera.video.VideoRecordEvent
-import androidx.core.content.ContextCompat
 import com.nash.core.common.DispatcherProvider
 import com.nash.core.model.RecordingConfig
 import com.nash.core.model.RecordingStartResult
@@ -42,6 +39,7 @@ class CameraVideoRecorder @Inject constructor(
     private val outputFactory: MediaStoreOutputFactory,
     private val errorMapper: RecordingErrorMapper,
     private val timeProvider: TimeProvider,
+    private val audioPermissionPolicy: AudioPermissionPolicy,
 ) : VideoRecorder {
 
     private var recorder: Recorder? = null
@@ -109,19 +107,10 @@ class CameraVideoRecorder @Inject constructor(
             try {
                 val outputOptions = outputFactory.create(config.fileNamePrefix)
 
-                var pendingRecording = currentRecorder.prepareRecording(context, outputOptions)
-
-                if (config.includeAudio &&
-                    ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-                    PackageManager.PERMISSION_GRANTED
-                ) {
-                    pendingRecording = try {
-                        pendingRecording.withAudioEnabled()
-                    } catch (_: SecurityException) {
-                        // Audio permission was revoked after the check; record video-only.
-                        pendingRecording
-                    }
-                }
+                val pendingRecording = audioPermissionPolicy.withAudioIfPermitted(
+                    pending = currentRecorder.prepareRecording(context, outputOptions),
+                    includeAudio = config.includeAudio,
+                ) { it.withAudioEnabled() }
 
                 finalizeResult = CompletableDeferred()
 
