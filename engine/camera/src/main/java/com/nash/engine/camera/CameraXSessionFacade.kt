@@ -25,6 +25,7 @@ import kotlinx.coroutines.launch
  * - [CameraVideoRecorder]     — Recorder/Recording lifecycle + RecordingState
  * - [MediaStoreOutputFactory] — output options + safe filenames (via the recorder)
  * - [CameraExecutorProvider]  — camera/recorder callback executor lifecycle
+ * - [CameraSessionErrorReporter] — bind-error stream merged into engine warnings
  *
  * VideoCapture is bound inside a UseCaseGroup carrying the anonymization
  * CameraEffect (see [CameraSessionBinder]), so preview AND recording consume
@@ -40,12 +41,12 @@ import kotlinx.coroutines.launch
 class CameraXSessionFacade @Inject constructor(
     private val dispatcherProvider: DispatcherProvider,
     private val frameSource: AnalysisFrameSource,
-    private val videoRecorder: CameraVideoRecorder,
     private val surfaceAttacher: PreviewSurfaceAttacher,
     private val executorProvider: CameraExecutorProvider,
     private val providerResolver: CameraProviderResolver,
     private val sessionBinder: CameraSessionBinder,
     private val sessionReleaser: CameraSessionReleaser,
+    private val sessionErrorReporter: CameraSessionErrorReporter,
 ) : CameraSessionController {
 
     private val facadeScope = CoroutineScope(
@@ -81,7 +82,10 @@ class CameraXSessionFacade @Inject constructor(
 
                 boundSession = sessionBinder.bind(provider, lifecycleOwner)
             } catch (e: Exception) {
-                videoRecorder.onCameraBindError(e)
+                // A bind failure is a session error, not a recording error:
+                // report it to the session error stream (surfaced as an
+                // engine warning), never through the recording state.
+                sessionErrorReporter.reportBindError(e)
             }
         }
     }

@@ -160,6 +160,7 @@ class CameraViewModel @Inject constructor(
             is EngineWarning.HighLatency -> R.string.warning_high_latency
             is EngineWarning.StorageLow -> R.string.warning_storage_low
             EngineWarning.CameraTimedOut -> R.string.warning_camera_timed_out
+            is EngineWarning.CameraSessionError -> R.string.warning_camera_session_error
             EngineWarning.DetectionDegraded -> R.string.warning_detection_degraded
         }
     }

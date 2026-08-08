@@ -6,8 +6,11 @@ import com.nash.core.model.VideoRecorder
 import com.nash.engine.camera.AnalysisFrameSource
 import com.nash.engine.camera.CameraExecutorProvider
 import com.nash.engine.camera.CameraSessionController
+import com.nash.engine.camera.CameraSessionErrorReporter
+import com.nash.engine.camera.CameraSessionErrorSource
 import com.nash.engine.camera.CameraVideoRecorder
 import com.nash.engine.camera.CameraXSessionFacade
+import com.nash.engine.camera.DefaultCameraSessionErrorReporter
 import com.nash.engine.camera.SingleThreadCameraExecutorProvider
 import dagger.Binds
 import dagger.Module
@@ -51,4 +54,16 @@ abstract class CameraBindingsModule {
     abstract fun bindCameraExecutorProvider(
         provider: SingleThreadCameraExecutorProvider
     ): CameraExecutorProvider
+
+    @Binds
+    @Singleton
+    abstract fun bindCameraSessionErrorReporter(
+        reporter: DefaultCameraSessionErrorReporter
+    ): CameraSessionErrorReporter
+
+    @Binds
+    @Singleton
+    abstract fun bindCameraSessionErrorSource(
+        source: DefaultCameraSessionErrorReporter
+    ): CameraSessionErrorSource
 }

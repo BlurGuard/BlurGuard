@@ -89,14 +89,6 @@ class CameraVideoRecorder @Inject constructor(
         }
     }
 
-    /** Surfaces a camera bind failure through the recording state stream. */
-    fun onCameraBindError(cause: Exception) {
-        _recordingState.value = RecordingState.Error(
-            message = cause.message ?: "Failed to bind camera",
-            cause = cause
-        )
-    }
-
     @SuppressLint("MissingPermission")
     override suspend fun startRecording(config: RecordingConfig): RecordingStartResult {
         return withContext(dispatcherProvider.io) {

@@ -10,6 +10,12 @@ sealed class EngineWarning {
     data object CameraTimedOut : EngineWarning()
 
     /**
+     * The camera session failed to bind; preview and recording stay
+     * unavailable until a rebind succeeds.
+     */
+    data class CameraSessionError(val message: String) : EngineWarning()
+
+    /**
      * At least one detector failed on the last detection pass; objects in
      * frame may be temporarily unprotected.
      */

@@ -18,6 +18,7 @@
     <string name="warning_high_latency">Detection is running slowly — anonymization may lag behind the video.</string>
     <string name="warning_storage_low">Storage is almost full. Recording may fail.</string>
     <string name="warning_camera_timed_out">The camera stopped responding. Try restarting the app.</string>
+    <string name="warning_camera_session_error">The camera could not start. Try again or restart the app.</string>
     <string name="warning_detection_degraded">Detection degraded — objects in frame may be temporarily visible.</string>
 
     <!-- Tracking overlay (debug prefixes are developer-facing; keep them Latin in all locales) -->
