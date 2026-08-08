@@ -10,15 +10,12 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.lifecycle.LifecycleOwner
 import com.nash.core.common.DispatcherProvider
-import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.guava.await
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
  * Facade over the CameraX **session**: provider resolution, lifecycle binding,
@@ -31,6 +28,7 @@ import kotlinx.coroutines.withContext
  * - [MediaStoreOutputFactory] — output options + safe filenames (via the recorder)
  * - [CameraPreviewViewFactory] — PreviewView creation/validation
  * - [CameraExecutorProvider]  — camera/recorder callback executor lifecycle
+ * - [CameraProviderResolver]  — ProcessCameraProvider resolution (off main)
  *
  * VideoCapture is bound inside a UseCaseGroup carrying the anonymization
  * CameraEffect, so preview AND recording consume processed output only.
@@ -44,7 +42,6 @@ import kotlinx.coroutines.withContext
  */
 @Singleton
 class CameraXSessionFacade @Inject constructor(
-    @param:ApplicationContext private val context: Context,
     private val dispatcherProvider: DispatcherProvider,
     private val anonymizationEffect: CameraEffect,
     private val useCaseFactory: CameraUseCaseFactory,
@@ -52,15 +49,12 @@ class CameraXSessionFacade @Inject constructor(
     private val videoRecorder: CameraVideoRecorder,
     private val previewViewFactory: CameraPreviewViewFactory,
     private val executorProvider: CameraExecutorProvider,
+    private val providerResolver: CameraProviderResolver,
 ) : CameraSessionController {
 
     private val facadeScope = CoroutineScope(
         SupervisorJob() + dispatcherProvider.io
     )
-
-    private val cameraProviderFuture by lazy {
-        ProcessCameraProvider.getInstance(context)
-    }
 
     private var cameraProvider: ProcessCameraProvider? = null
     private var previewUseCase: Preview? = null
@@ -90,12 +84,10 @@ class CameraXSessionFacade @Inject constructor(
      */
     override fun bind(lifecycleOwner: LifecycleOwner) {
         // CameraX lifecycle binding and surface-provider attachment must run on
-        // the main thread; only the provider future resolution happens on IO.
+        // the main thread; the resolver hops to IO internally for resolution.
         facadeScope.launch(dispatcherProvider.main) {
             try {
-                val provider = withContext(dispatcherProvider.io) {
-                    cameraProviderFuture.await()
-                }
+                val provider = providerResolver.resolve()
                 cameraProvider = provider
 
                 // Rebind safety: never leave stale use cases or analyzers around.
