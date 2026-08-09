@@ -36,6 +36,8 @@ import com.nash.engine.api.keepvisible.KeepVisibleRecognizer
  * check) guarding the expensive recognizer path.
  * @param logger logging seam; production wires an Android-backed
  * implementation in DI, JVM tests default to [RecognitionLogger.None].
+ * @param selector priority policy: picks the at-most-one recognition
+ * candidate for each detection frame.
  */
 class KeepVisibleOrchestrator<F>(
     private val recognizer: FaceRecognizer<F>,
@@ -47,6 +49,9 @@ class KeepVisibleOrchestrator<F>(
     private val liveTracks: LiveTrackRegistry = LiveTrackRegistry(config, nowMs),
     private val gate: RecognitionGate = RecognitionGate(config, liveTracks),
     private val logger: RecognitionLogger = RecognitionLogger.None,
+    private val selector: RecognitionCandidateSelector = RecognitionCandidateSelector(
+        commands, liveTracks, gate, state, store, config, logger
+    ),
 ) : KeepVisibleController, KeepVisibleRecognizer<F> {
 
     /** ml-thread only. */
@@ -89,65 +94,13 @@ class KeepVisibleOrchestrator<F>(
         enrollAttempts.keys.retainAll(faces.map { it.id.value }.toSet())
         liveTracks.onFrame(faces, metadata)
 
-        // Priority 1: pending tap. The user asked explicitly, so the STABILITY gate
-        // is skipped — but the size gate still applies: an undersized face cannot
-        // produce a usable embedding, so the tap stays pending until the subject is
-        // close enough. The interval floor spreads maxEnrollAttempts over time.
-        val pendingTap = commands.pendingEnrollment()
-        if (pendingTap != null) {
-            val target = faces.firstOrNull { it.id == pendingTap }
-            if (target != null) {
-                if (liveTracks.isIntervalElapsed(target) && gate.isLargeEnough(target, metadata)) {
-                    enroll(frame, target, metadata)
-                }
-                return
-            }
-            logger.debug { "tap: track=${pendingTap.value} no longer alive, dropping request" }
-            commands.clearPendingEnrollment(pendingTap)
-        }
-
-        // Priority 2: verify unknown/pending faces (re-identification on re-entry).
-        if (store.trustedPersonCount > 0) {
-            pickDue(faces, metadata, config.verifyRetryIntervalFrames) {
-                it.state == VerificationState.UNKNOWN || it.state == VerificationState.PENDING
-            }?.let {
-                verify(frame, it, metadata)
-                return
-            }
-        }
-
-        // Priority 3: periodic re-verify of trusted tracks (ID-switch defense
-        // AND pipeline self-check: same person should log high similarity here).
-        pickDue(faces, metadata, config.reVerifyIntervalFrames) {
-            it.state == VerificationState.TRUSTED
-        }?.let {
-            reVerify(frame, it, metadata)
-            return
-        }
-
-        // Priority 4: slow recheck of rejected tracks.
-        pickDue(
-            faces,
-            metadata,
-            config.reVerifyIntervalFrames * config.rejectedRecheckMultiplier
-        ) {
-            it.state == VerificationState.REJECTED
-        }?.let {
-            verify(frame, it, metadata)
+        when (val candidate = selector.select(faces, metadata)) {
+            is RecognitionCandidate.Enroll -> enroll(frame, candidate.track, metadata)
+            is RecognitionCandidate.Verify -> verify(frame, candidate.track, metadata)
+            is RecognitionCandidate.ReVerify -> reVerify(frame, candidate.track, metadata)
+            null -> Unit // nothing due or everything gated: fail-closed, stay blurred
         }
     }
-
-    /** Oldest-checked eligible face matching [predicate] whose [interval] has elapsed. */
-    private fun pickDue(
-        faces: List<TrackedBox>,
-        metadata: FrameMetadata,
-        interval: Long,
-        predicate: (TrackVerification) -> Boolean
-    ): TrackedBox? = faces
-        .filter { predicate(state.of(it.id)) }
-        .filter { metadata.frameId - state.of(it.id).lastCheckedFrame >= interval }
-        .filter { gate.canAutoCheck(it, metadata) }
-        .minByOrNull { state.of(it.id).lastCheckedFrame }
 
     /**
      * Single entry point to the expensive path. Stamps the clock BEFORE the
