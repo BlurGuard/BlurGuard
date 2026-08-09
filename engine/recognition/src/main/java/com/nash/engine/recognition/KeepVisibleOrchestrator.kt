@@ -14,12 +14,11 @@ import com.nash.core.model.TrustedPersonStore
 import com.nash.core.model.VerificationState
 import com.nash.engine.api.keepvisible.KeepVisibleController
 import com.nash.engine.api.keepvisible.KeepVisibleRecognizer
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Person-level keep-visible trust. Runs on the ml thread inside the pipeline's
- * detection branch; UI threads only touch the atomics via [KeepVisibleController].
+ * detection branch; UI threads only touch the lock-free [KeepVisibleCommandQueue]
+ * via [KeepVisibleController].
  *
  * Budget: at most ONE recognizer call per detection frame, priority-ordered:
  * pending tap > verify unknown/pending > re-verify trusted > recheck rejected.
@@ -39,13 +38,10 @@ class KeepVisibleOrchestrator<F>(
     private val store: TrustedPersonStore,
     private val state: KeepVisibleStateStore,
     private val config: RecognitionConfig,
+    private val commands: KeepVisibleCommandQueue = KeepVisibleCommandQueue(),
     private val nowMs: () -> Long = SystemClock::uptimeMillis,
     private val logger: RecognitionLogger = RecognitionLogger.None,
 ) : KeepVisibleController, KeepVisibleRecognizer<F> {
-
-    /** Written from UI, drained on ml thread. */
-    private val pendingEnrollment = AtomicLong(NO_REQUEST)
-    private val revokeAllRequested = AtomicBoolean(false)
 
     /** ml-thread only. */
     private val enrollAttempts = HashMap<Long, Int>()
@@ -58,17 +54,17 @@ class KeepVisibleOrchestrator<F>(
 
     override fun requestKeepVisible(trackId: TrackId) {
         logger.debug { "tap: keep-visible requested for track=${trackId.value}" }
-        pendingEnrollment.set(trackId.value)
+        commands.requestEnrollment(trackId)
     }
 
     override fun revokeAll() {
         logger.debug { "revokeAll requested" }
         state.clearAll() // instant visual re-blur
-        revokeAllRequested.set(true) // store wipe drained on ml thread
+        commands.requestRevokeAll() // store wipe drained on ml thread
     }
 
     override fun onSessionReset() {
-        pendingEnrollment.set(NO_REQUEST)
+        commands.reset()
         enrollAttempts.clear()
         firstSeenFrame.clear()
         lastRecognizedAtMs.clear()
@@ -81,7 +77,7 @@ class KeepVisibleOrchestrator<F>(
         metadata: FrameMetadata,
         boxes: List<TrackedBox>
     ) {
-        if (revokeAllRequested.compareAndSet(true, false)) {
+        if (commands.drainRevokeAll()) {
             store.revokeAll()
             state.clearAll()
             enrollAttempts.clear()
@@ -104,17 +100,17 @@ class KeepVisibleOrchestrator<F>(
         // is skipped — but the size gate still applies: an undersized face cannot
         // produce a usable embedding, so the tap stays pending until the subject is
         // close enough. The interval floor spreads maxEnrollAttempts over time.
-        val pendingValue = pendingEnrollment.get()
-        if (pendingValue != NO_REQUEST) {
-            val target = faces.firstOrNull { it.id.value == pendingValue }
+        val pendingTap = commands.pendingEnrollment()
+        if (pendingTap != null) {
+            val target = faces.firstOrNull { it.id == pendingTap }
             if (target != null) {
                 if (isIntervalElapsed(target, now) && isLargeEnough(target, metadata)) {
                     enroll(frame, target, metadata, now)
                 }
                 return
             }
-            logger.debug { "tap: track=$pendingValue no longer alive, dropping request" }
-            pendingEnrollment.compareAndSet(pendingValue, NO_REQUEST)
+            logger.debug { "tap: track=${pendingTap.value} no longer alive, dropping request" }
+            commands.clearPendingEnrollment(pendingTap)
         }
 
         // Priority 2: verify unknown/pending faces (re-identification on re-entry).
@@ -227,7 +223,7 @@ class KeepVisibleOrchestrator<F>(
             }
             if (attempts >= config.maxEnrollAttempts) {
                 enrollAttempts.remove(track.id.value)
-                pendingEnrollment.compareAndSet(track.id.value, NO_REQUEST)
+                commands.clearPendingEnrollment(track.id)
                 state.set(
                     track.id,
                     TrackVerification(
@@ -273,7 +269,7 @@ class KeepVisibleOrchestrator<F>(
                 lastCheckedFrame = metadata.frameId
             )
         )
-        pendingEnrollment.compareAndSet(track.id.value, NO_REQUEST)
+        commands.clearPendingEnrollment(track.id)
     }
 
     private suspend fun verify(
@@ -413,9 +409,4 @@ class KeepVisibleOrchestrator<F>(
     }
 
     private fun fmt(v: Float) = "%.3f".format(v)
-
-    private companion object {
-        /** Sentinel for "no pending enrollment" — real TrackIds start at 1. */
-        const val NO_REQUEST = Long.MIN_VALUE
-    }
 }
