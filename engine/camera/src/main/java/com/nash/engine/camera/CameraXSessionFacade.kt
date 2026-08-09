@@ -2,88 +2,65 @@ package com.nash.engine.camera
 
 import android.content.Context
 import android.view.View
-import androidx.camera.core.CameraEffect
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.ImageProxy
-import androidx.camera.core.Preview
-import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.view.PreviewView
 import androidx.lifecycle.LifecycleOwner
 import com.nash.core.common.DispatcherProvider
-import com.nash.core.model.FrameSource
-import com.nash.core.model.VideoRecorder
-import dagger.hilt.android.qualifiers.ApplicationContext
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.guava.await
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
- * Facade over the CameraX **session**: provider resolution, lifecycle binding,
- * processed-UseCaseGroup wiring, preview surface attachment, and
- * unbind/shutdown coordination. Coordinator ONLY — all real work lives in
- * focused collaborators:
- * - [CameraUseCaseFactory]    — Preview / VideoCapture / ImageAnalysis + ViewPort
+ * Facade over the CameraX **session**: coordinates bind/unbind/shutdown
+ * sequencing and holds the current [BoundCameraSession]. Coordinator ONLY —
+ * all real work lives in focused collaborators:
+ * - [CameraProviderResolver]  — ProcessCameraProvider resolution (off main)
+ * - [CameraSessionBinder]     — use-case construction + lifecycle binding
+ *                               (via [CameraUseCaseFactory])
+ * - [CameraSessionReleaser]   — ordered session teardown
+ * - [PreviewSurfaceAttacher]  — PreviewView/Preview state + surface attachment
+ *                               (creates/validates views via [CameraPreviewViewFactory])
  * - [AnalysisFrameSource]     — analyzer, FrameMetadata, frame IDs, frame closing
  * - [CameraVideoRecorder]     — Recorder/Recording lifecycle + RecordingState
  * - [MediaStoreOutputFactory] — output options + safe filenames (via the recorder)
- * - [CameraPreviewViewFactory] — PreviewView creation/validation
+ * - [CameraExecutorProvider]  — camera/recorder callback executor lifecycle
+ * - [CameraSessionErrorReporter] — bind-error stream merged into engine warnings
  *
  * VideoCapture is bound inside a UseCaseGroup carrying the anonymization
- * CameraEffect, so preview AND recording consume processed output only.
- * engine/camera remains the only video-writing module, and raw frames or
- * surfaces never leave it.
+ * CameraEffect (see [CameraSessionBinder]), so preview AND recording consume
+ * processed output only. engine/camera remains the only video-writing
+ * module, and raw frames or surfaces never leave it.
  *
- * Public contracts [VideoRecorder] and [FrameSource] are implemented by
- * delegation to their owning collaborators, and the session surface is
- * exposed through [CameraSessionController].
+ * The facade exposes only the [CameraSessionController] session surface.
+ * The public `VideoRecorder` and `FrameSource` contracts are bound directly
+ * to [CameraVideoRecorder] and [AnalysisFrameSource] in DI, so no consumer
+ * can reach recording or frame APIs through the session controller.
  */
 @Singleton
 class CameraXSessionFacade @Inject constructor(
-    @param:ApplicationContext private val context: Context,
     private val dispatcherProvider: DispatcherProvider,
-    private val anonymizationEffect: CameraEffect,
-    private val useCaseFactory: CameraUseCaseFactory,
     private val frameSource: AnalysisFrameSource,
-    private val videoRecorder: CameraVideoRecorder,
-    private val previewViewFactory: CameraPreviewViewFactory,
-) : CameraSessionController,
-    VideoRecorder by videoRecorder,
-    FrameSource<ImageProxy> by frameSource {
+    private val surfaceAttacher: PreviewSurfaceAttacher,
+    private val executorProvider: CameraExecutorProvider,
+    private val providerResolver: CameraProviderResolver,
+    private val sessionBinder: CameraSessionBinder,
+    private val sessionReleaser: CameraSessionReleaser,
+    private val sessionErrorReporter: CameraSessionErrorReporter,
+) : CameraSessionController {
 
     private val facadeScope = CoroutineScope(
         SupervisorJob() + dispatcherProvider.io
     )
 
-    private val cameraExecutor: ExecutorService = Executors.newSingleThreadExecutor()
-    private val cameraProviderFuture by lazy {
-        ProcessCameraProvider.getInstance(context)
-    }
-
-    private var cameraProvider: ProcessCameraProvider? = null
-    private var previewUseCase: Preview? = null
-    private var imageAnalysisUseCase: ImageAnalysis? = null
-
-    @Volatile
-    private var previewView: PreviewView? = null
+    private var boundSession: BoundCameraSession? = null
 
     override fun createPreviewView(context: Context): View {
-        return previewViewFactory.create(context).also { view ->
-            previewView = view
-            attachSurfaceProviderIfReady()
-        }
+        return surfaceAttacher.createPreviewView(context)
     }
 
     override fun attachPreviewView(view: View) {
-        previewView = previewViewFactory.requirePreviewView(view)
-        attachSurfaceProviderIfReady()
+        surfaceAttacher.attachPreviewView(view)
     }
 
     /**
@@ -95,43 +72,20 @@ class CameraXSessionFacade @Inject constructor(
      */
     override fun bind(lifecycleOwner: LifecycleOwner) {
         // CameraX lifecycle binding and surface-provider attachment must run on
-        // the main thread; only the provider future resolution happens on IO.
+        // the main thread; the resolver hops to IO internally for resolution.
         facadeScope.launch(dispatcherProvider.main) {
             try {
-                val provider = withContext(dispatcherProvider.io) {
-                    cameraProviderFuture.await()
-                }
-                cameraProvider = provider
+                val provider = providerResolver.resolve()
 
                 // Rebind safety: never leave stale use cases or analyzers around.
                 releaseSession()
 
-                val preview = useCaseFactory.createPreview()
-                    .also { previewUseCase = it }
-                attachSurfaceProviderIfReady()
-
-                val recorder = useCaseFactory.createRecorder(cameraExecutor)
-                videoRecorder.attach(recorder, cameraExecutor)
-                val videoCapture = useCaseFactory.createVideoCapture(recorder)
-
-                val imageAnalysis = useCaseFactory.createImageAnalysis()
-                    .also { imageAnalysisUseCase = it }
-                frameSource.attachTo(imageAnalysis)
-
-                val useCaseGroup = useCaseFactory.createUseCaseGroup(
-                    preview = preview,
-                    videoCapture = videoCapture,
-                    imageAnalysis = imageAnalysis,
-                    anonymizationEffect = anonymizationEffect,
-                )
-
-                provider.bindToLifecycle(
-                    lifecycleOwner,
-                    CameraSelector.DEFAULT_BACK_CAMERA,
-                    useCaseGroup,
-                )
+                boundSession = sessionBinder.bind(provider, lifecycleOwner)
             } catch (e: Exception) {
-                videoRecorder.onCameraBindError(e)
+                // A bind failure is a session error, not a recording error:
+                // report it to the session error stream (surfaced as an
+                // engine warning), never through the recording state.
+                sessionErrorReporter.reportBindError(e)
             }
         }
     }
@@ -155,33 +109,18 @@ class CameraXSessionFacade @Inject constructor(
         facadeScope.launch(dispatcherProvider.main) {
             releaseSession()
             frameSource.shutdown()
-            cameraExecutor.shutdown()
+            executorProvider.shutdown()
             facadeScope.cancel()
         }
     }
 
     /**
-     * Stops any active recording, detaches the analyzer and recorder, and
-     * unbinds all use cases. Must run on the main thread.
-     *
-     * [cameraProvider] is intentionally kept: ProcessCameraProvider is a
-     * process-wide singleton that stays valid across rebinds.
-     * [previewView] is intentionally kept: the engine re-attaches the
-     * feature's PreviewTarget on every bind, and keeping the last view lets
-     * an unbind/rebind cycle without a new target still show a preview.
+     * Releases the current session (see [CameraSessionReleaser] for the
+     * exact teardown order) and clears the stored [BoundCameraSession].
+     * Must run on the main thread.
      */
-    private fun releaseSession() {
-        videoRecorder.cancelActiveRecordingQuietly()
-        videoRecorder.detach()
-        imageAnalysisUseCase?.let { frameSource.detachFrom(it) }
-        cameraProvider?.unbindAll()
-        imageAnalysisUseCase = null
-        previewUseCase = null
-    }
-
-    private fun attachSurfaceProviderIfReady() {
-        val view = previewView ?: return
-        val preview = previewUseCase ?: return
-        preview.surfaceProvider = view.surfaceProvider
+    private suspend fun releaseSession() {
+        sessionReleaser.release(boundSession)
+        boundSession = null
     }
 }

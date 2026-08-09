@@ -1,13 +1,10 @@
 package com.nash.engine.camera
 
-import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
-import android.content.pm.PackageManager
 import androidx.camera.video.Recorder
 import androidx.camera.video.Recording
 import androidx.camera.video.VideoRecordEvent
-import androidx.core.content.ContextCompat
 import com.nash.core.common.DispatcherProvider
 import com.nash.core.model.RecordingConfig
 import com.nash.core.model.RecordingStartResult
@@ -20,16 +17,21 @@ import java.util.concurrent.Executor
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
 /**
  * Owns the CameraX [Recorder]/[Recording] pair, start/stop semantics, and
  * [RecordingState]. Output destinations come exclusively from
  * [MediaStoreOutputFactory].
+ *
+ * All mutable session state (attached recorder/executor, active recording,
+ * finalize deferred) lives in the mutex-guarded [RecordingSessionState], so
+ * [startRecording], [stopRecording], [detach], and
+ * [cancelActiveRecordingQuietly] cannot interleave unsafely.
  *
  * Together with the facade, this remains part of the ONLY video-writing
  * path in the project (architecture invariant #2). It records the CameraX
@@ -41,131 +43,77 @@ class CameraVideoRecorder @Inject constructor(
     private val dispatcherProvider: DispatcherProvider,
     private val outputFactory: MediaStoreOutputFactory,
     private val errorMapper: RecordingErrorMapper,
+    private val eventMapper: CameraRecordingEventMapper,
     private val timeProvider: TimeProvider,
+    private val audioPermissionPolicy: AudioPermissionPolicy,
 ) : VideoRecorder {
 
-    private var recorder: Recorder? = null
-    private var callbackExecutor: Executor? = null
-
-    @Volatile
-    private var activeRecording: Recording? = null
-
-    private var finalizeResult: CompletableDeferred<RecordingStopResult>? = null
+    private val sessionState = RecordingSessionState<Recorder, Recording>()
 
     private val _recordingState = MutableStateFlow<RecordingState>(RecordingState.Idle)
     override val recordingState: Flow<RecordingState> = _recordingState.asStateFlow()
 
-    /** Called by [CameraXSessionFacade] once the CameraX [Recorder] is created during bind. */
-    fun attach(recorder: Recorder, callbackExecutor: Executor) {
-        this.recorder = recorder
-        this.callbackExecutor = callbackExecutor
+    /** Called by [CameraSessionBinder] once the CameraX [Recorder] is created during bind. */
+    suspend fun attach(recorder: Recorder, callbackExecutor: Executor) {
+        sessionState.attach(recorder, callbackExecutor)
     }
 
     /**
-     * Clears the session-scoped recorder/executor references. Called by the
-     * facade on unbind/shutdown; [attach] is called again on the next bind.
-     * Recording attempts while detached fail with "Camera not initialized".
+     * Clears the session-scoped recorder/executor references. Called by
+     * [CameraSessionReleaser] on unbind/shutdown; [attach] is called again
+     * on the next bind. Recording attempts while detached fail with
+     * "Camera not initialized".
      */
-    fun detach() {
-        recorder = null
-        callbackExecutor = null
+    suspend fun detach() {
+        sessionState.detach()
     }
 
     /**
      * Best-effort stop used during unbind/shutdown.
      *
-     * Keep [finalizeResult] so any concurrent [stopRecording] caller receives
-     * the camera finalize result instead of hanging or getting a synthetic error.
+     * The finalize deferred is kept so any concurrent [stopRecording] caller
+     * receives the camera finalize result instead of hanging or getting a
+     * synthetic error.
      */
-    fun cancelActiveRecordingQuietly() {
+    suspend fun cancelActiveRecordingQuietly() {
+        val recording = sessionState.clearActiveRecording() ?: return
         try {
-            activeRecording?.stop()
-            activeRecording?.close()
+            recording.stop()
+            recording.close()
         } catch (_: Exception) {
             // Best-effort cleanup during unbind/shutdown; the Finalize event reports
             // real recording errors to any active stopRecording caller.
-        } finally {
-            activeRecording = null
         }
-    }
-
-    /** Surfaces a camera bind failure through the recording state stream. */
-    fun onCameraBindError(cause: Exception) {
-        _recordingState.value = RecordingState.Error(
-            message = cause.message ?: "Failed to bind camera",
-            cause = cause
-        )
     }
 
     @SuppressLint("MissingPermission")
     override suspend fun startRecording(config: RecordingConfig): RecordingStartResult {
         return withContext(dispatcherProvider.io) {
-            val currentRecorder = recorder
-            val executor = callbackExecutor
-            if (currentRecorder == null || executor == null) {
-                return@withContext RecordingStartResult.Failure(
-                    "Camera not initialized. Bind the camera before recording."
-                )
-            }
-
-            if (activeRecording != null) {
-                return@withContext RecordingStartResult.Failure("Recording already in progress")
-            }
-
-            _recordingState.value = RecordingState.Starting
-
             try {
-                val outputOptions = outputFactory.create(config.fileNamePrefix)
+                val outcome = sessionState.start { recorder, executor ->
+                    _recordingState.value = RecordingState.Starting
 
-                var pendingRecording = currentRecorder.prepareRecording(context, outputOptions)
+                    val outputOptions = outputFactory.create(config.fileNamePrefix)
 
-                if (config.includeAudio &&
-                    ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-                    PackageManager.PERMISSION_GRANTED
-                ) {
-                    pendingRecording = try {
-                        pendingRecording.withAudioEnabled()
-                    } catch (_: SecurityException) {
-                        // Audio permission was revoked after the check; record video-only.
-                        pendingRecording
-                    }
+                    val pendingRecording = audioPermissionPolicy.withAudioIfPermitted(
+                        pending = recorder.prepareRecording(context, outputOptions),
+                        includeAudio = config.includeAudio,
+                    ) { it.withAudioEnabled() }
+
+                    pendingRecording.start(executor) { event -> onRecordEvent(event) }
                 }
 
-                finalizeResult = CompletableDeferred()
+                when (outcome) {
+                    is RecordingSessionState.StartOutcome.NotAttached ->
+                        RecordingStartResult.Failure(
+                            "Camera not initialized. Bind the camera before recording."
+                        )
 
-                activeRecording = pendingRecording.start(executor) { event ->
-                    when (event) {
-                        is VideoRecordEvent.Start -> {
-                            _recordingState.value = RecordingState.Recording(
-                                startedAtMillis = timeProvider.currentTimeMillis()
-                            )
-                        }
+                    is RecordingSessionState.StartOutcome.AlreadyRecording ->
+                        RecordingStartResult.Failure("Recording already in progress")
 
-                        is VideoRecordEvent.Finalize -> {
-                            activeRecording = null
-                            val result = if (!event.hasError()) {
-                                RecordingStopResult.Saved(
-                                    uri = event.outputResults.outputUri.toString()
-                                )
-                            } else {
-                                RecordingStopResult.Failure(
-                                    message = event.cause?.message ?: "Recording failed",
-                                    cause = event.cause
-                                )
-                            }
-                            finalizeResult?.complete(result)
-                            _recordingState.value = when (result) {
-                                is RecordingStopResult.Saved -> RecordingState.Saved(result.uri)
-                                is RecordingStopResult.Failure -> RecordingState.Error(
-                                    message = result.message,
-                                    cause = result.cause
-                                )
-                            }
-                        }
-                    }
+                    is RecordingSessionState.StartOutcome.Started -> RecordingStartResult.Started
                 }
-
-                RecordingStartResult.Started
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -176,21 +124,45 @@ class CameraVideoRecorder @Inject constructor(
 
     override suspend fun stopRecording(): RecordingStopResult {
         return withContext(dispatcherProvider.io) {
-            val recording = activeRecording
+            val claim = sessionState.claimStop()
                 ?: return@withContext RecordingStopResult.Failure("No active recording")
 
             _recordingState.value = RecordingState.Stopping
 
             try {
-                recording.stop()
-                val result = finalizeResult?.await()
+                claim.recording.stop()
+                // The stored finalize deferred is cleared by the Finalize event
+                // via RecordingSessionState.finish(), never by this caller, so
+                // a recording started while we await can never lose its own
+                // fresh deferred to this stop's cleanup.
+                claim.finalizeResult?.await()
                     ?: RecordingStopResult.Failure("Recording did not finalize")
-                finalizeResult = null
-                result
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 errorMapper.stopFailure(e).also(::publishStopFailure)
+            }
+        }
+    }
+
+    /**
+     * Handles recording events on the camera callback executor. The Finalize
+     * branch briefly blocks that dedicated single thread to update the
+     * session state; the session mutex is never held across an await, so the
+     * wait is bounded and cannot deadlock.
+     */
+    private fun onRecordEvent(event: VideoRecordEvent) {
+        when (event) {
+            is VideoRecordEvent.Start -> {
+                _recordingState.value = RecordingState.Recording(
+                    startedAtMillis = timeProvider.currentTimeMillis()
+                )
+            }
+
+            is VideoRecordEvent.Finalize -> {
+                val result = eventMapper.mapFinalize(event)
+                runBlocking { sessionState.finish(result) }
+                _recordingState.value = eventMapper.mapState(result)
             }
         }
     }

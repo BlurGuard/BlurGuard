@@ -21,6 +21,7 @@ import com.nash.engine.api.RecordingState
 import com.nash.engine.api.TrustedFaceRef
 import com.nash.engine.api.keepvisible.KeepVisibleController
 import com.nash.engine.camera.CameraSessionController
+import com.nash.engine.camera.CameraSessionErrorSource
 import com.nash.engine.impl.mapper.AnonymizationModeMapper
 import com.nash.engine.impl.mapper.RecordingRequestMapper
 import com.nash.engine.impl.mapper.RecordingStateMapper
@@ -32,10 +33,12 @@ import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 
 @Singleton
 class RealBlurGuardEngine @Inject constructor(
     private val cameraSession: CameraSessionController,
+    private val sessionErrors: CameraSessionErrorSource,
     private val videoRecorder: VideoRecorder,
     private val frameSource: @JvmSuppressWildcards FrameSource<ImageProxy>,
     private val pipeline: AnonymizationPipeline<ImageProxy>,
@@ -103,9 +106,14 @@ class RealBlurGuardEngine @Inject constructor(
         }
     }
 
-    override fun observeWarnings(): Flow<EngineWarning> = pipeline.degraded
-        .filter { it }
-        .map { EngineWarning.DetectionDegraded }
+    override fun observeWarnings(): Flow<EngineWarning> = merge(
+        pipeline.degraded
+            .filter { it }
+            .map { EngineWarning.DetectionDegraded },
+        sessionErrors.bindErrors.map { cause ->
+            EngineWarning.CameraSessionError(cause.message ?: "Failed to bind camera")
+        },
+    )
 
     override val trackedBoxes: StateFlow<List<TrackedBox>>
         get() = pipeline.trackedBoxes
