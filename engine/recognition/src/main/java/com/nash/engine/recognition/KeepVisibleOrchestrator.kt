@@ -104,7 +104,7 @@ class KeepVisibleOrchestrator<F>(
         // Priority 1: pending tap. The user asked explicitly, so the STABILITY gate
         // is skipped — but the size gate still applies: an undersized face cannot
         // produce a usable embedding, so the tap stays pending until the subject is
-        // close enough. The interval floor spreads MAX_ENROLL_ATTEMPTS over time.
+        // close enough. The interval floor spreads maxEnrollAttempts over time.
         val pendingValue = pendingEnrollment.get()
         if (pendingValue != NO_REQUEST) {
             val target = faces.firstOrNull { it.id.value == pendingValue }
@@ -120,7 +120,7 @@ class KeepVisibleOrchestrator<F>(
 
         // Priority 2: verify unknown/pending faces (re-identification on re-entry).
         if (store.trustedPersonCount > 0) {
-            pickDue(faces, metadata, now, VERIFY_RETRY_INTERVAL_FRAMES) {
+            pickDue(faces, metadata, now, config.verifyRetryIntervalFrames) {
                 it.state == VerificationState.UNKNOWN || it.state == VerificationState.PENDING
             }?.let {
                 verify(frame, it, metadata, now)
@@ -142,7 +142,7 @@ class KeepVisibleOrchestrator<F>(
             faces,
             metadata,
             now,
-            config.reVerifyIntervalFrames * REJECTED_RECHECK_MULTIPLIER
+            config.reVerifyIntervalFrames * config.rejectedRecheckMultiplier
         ) {
             it.state == VerificationState.REJECTED
         }?.let {
@@ -223,9 +223,10 @@ class KeepVisibleOrchestrator<F>(
             val attempts = (enrollAttempts[track.id.value] ?: 0) + 1
             enrollAttempts[track.id.value] = attempts
             debug {
-                "enroll track=${track.id.value}: null embed, attempt $attempts/$MAX_ENROLL_ATTEMPTS"
+                "enroll track=${track.id.value}: null embed, " +
+                        "attempt $attempts/${config.maxEnrollAttempts}"
             }
-            if (attempts >= MAX_ENROLL_ATTEMPTS) {
+            if (attempts >= config.maxEnrollAttempts) {
                 enrollAttempts.remove(track.id.value)
                 pendingEnrollment.compareAndSet(track.id.value, NO_REQUEST)
                 state.set(
@@ -371,10 +372,10 @@ class KeepVisibleOrchestrator<F>(
             // SELF-CHECK: person hasn't moved -> this similarity is your
             // pipeline health metric. Should be comfortably above threshold.
             debug {
-                "reVerify track=${track.id.value}: OK person=${match!!.personId.value} " +
+                "reVerify track=${track.id.value}: OK person=${match.personId.value} " +
                         "sim=${fmt(match.similarity)}"
             }
-            store.addToGallery(match!!.personId, embedding)
+            store.addToGallery(match.personId, embedding)
             state.set(
                 track.id,
                 current.copy(
@@ -423,9 +424,5 @@ class KeepVisibleOrchestrator<F>(
         const val TAG = "KeepVisible"
         /** Sentinel for "no pending enrollment" — real TrackIds start at 1. */
         const val NO_REQUEST = Long.MIN_VALUE
-        const val VERIFY_RETRY_INTERVAL_FRAMES = 6L
-        const val MAX_ENROLL_ATTEMPTS = 10
-        /** Was 4 — shortened: hysteresis (F2) makes rejection safe to retry sooner. */
-        const val REJECTED_RECHECK_MULTIPLIER = 2
     }
 }
