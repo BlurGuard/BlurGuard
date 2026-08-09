@@ -38,6 +38,7 @@ class CameraVideoRecorder @Inject constructor(
     private val dispatcherProvider: DispatcherProvider,
     private val outputFactory: MediaStoreOutputFactory,
     private val errorMapper: RecordingErrorMapper,
+    private val eventMapper: CameraRecordingEventMapper,
     private val timeProvider: TimeProvider,
     private val audioPermissionPolicy: AudioPermissionPolicy,
 ) : VideoRecorder {
@@ -124,24 +125,9 @@ class CameraVideoRecorder @Inject constructor(
 
                         is VideoRecordEvent.Finalize -> {
                             activeRecording = null
-                            val result = if (!event.hasError()) {
-                                RecordingStopResult.Saved(
-                                    uri = event.outputResults.outputUri.toString()
-                                )
-                            } else {
-                                RecordingStopResult.Failure(
-                                    message = event.cause?.message ?: "Recording failed",
-                                    cause = event.cause
-                                )
-                            }
+                            val result = eventMapper.mapFinalize(event)
                             finalizeResult?.complete(result)
-                            _recordingState.value = when (result) {
-                                is RecordingStopResult.Saved -> RecordingState.Saved(result.uri)
-                                is RecordingStopResult.Failure -> RecordingState.Error(
-                                    message = result.message,
-                                    cause = result.cause
-                                )
-                            }
+                            _recordingState.value = eventMapper.mapState(result)
                         }
                     }
                 }
