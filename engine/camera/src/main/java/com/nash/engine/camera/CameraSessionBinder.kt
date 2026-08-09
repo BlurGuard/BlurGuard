@@ -36,7 +36,7 @@ class CameraSessionBinder @Inject constructor(
      * The construction sequence mirrors the legacy facade exactly:
      * preview -> recorder/videoCapture -> imageAnalysis -> group -> bind.
      */
-    fun bind(
+    suspend fun bind(
         provider: ProcessCameraProvider,
         lifecycleOwner: LifecycleOwner,
     ): BoundCameraSession {

@@ -119,7 +119,7 @@ class CameraXSessionFacade @Inject constructor(
      * exact teardown order) and clears the stored [BoundCameraSession].
      * Must run on the main thread.
      */
-    private fun releaseSession() {
+    private suspend fun releaseSession() {
         sessionReleaser.release(boundSession)
         boundSession = null
     }

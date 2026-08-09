@@ -24,7 +24,7 @@ class CameraSessionReleaser @Inject constructor(
     private val surfaceAttacher: PreviewSurfaceAttacher,
 ) {
 
-    fun release(session: BoundCameraSession?) {
+    suspend fun release(session: BoundCameraSession?) {
         videoRecorder.cancelActiveRecordingQuietly()
         videoRecorder.detach()
         session?.let { frameSource.detachFrom(it.imageAnalysis) }
