@@ -1,6 +1,5 @@
 package com.nash.engine.recognition
 
-import android.os.SystemClock
 import com.nash.core.model.DetectionClass
 import com.nash.core.model.FaceEmbedding
 import com.nash.core.model.FaceRecognizer
@@ -29,7 +28,10 @@ import com.nash.engine.api.keepvisible.KeepVisibleRecognizer
  * a gate is always fail-closed: no decision is recorded and the face stays
  * blurred.
  *
- * @param nowMs wall-clock source, injectable so cadence is testable on the JVM.
+ * @param nowMs monotonic millisecond clock, injectable so cadence is testable
+ * on the JVM; production passes a TimeProvider-backed source from DI.
+ * @param liveTracks per-track bookkeeping (age, attempt clock) and the
+ * stability/interval gates derived from it.
  * @param logger logging seam; production wires an Android-backed
  * implementation in DI, JVM tests default to [RecognitionLogger.None].
  */
@@ -39,18 +41,13 @@ class KeepVisibleOrchestrator<F>(
     private val state: KeepVisibleStateStore,
     private val config: RecognitionConfig,
     private val commands: KeepVisibleCommandQueue = KeepVisibleCommandQueue(),
-    private val nowMs: () -> Long = SystemClock::uptimeMillis,
+    private val nowMs: () -> Long,
+    private val liveTracks: LiveTrackRegistry = LiveTrackRegistry(config, nowMs),
     private val logger: RecognitionLogger = RecognitionLogger.None,
 ) : KeepVisibleController, KeepVisibleRecognizer<F> {
 
     /** ml-thread only. */
     private val enrollAttempts = HashMap<Long, Int>()
-
-    /** ml-thread only. First frame each live track was seen on (age gate). */
-    private val firstSeenFrame = HashMap<Long, Long>()
-
-    /** ml-thread only. Wall clock of the last embed attempt per track. */
-    private val lastRecognizedAtMs = HashMap<Long, Long>()
 
     override fun requestKeepVisible(trackId: TrackId) {
         logger.debug { "tap: keep-visible requested for track=${trackId.value}" }
@@ -66,8 +63,7 @@ class KeepVisibleOrchestrator<F>(
     override fun onSessionReset() {
         commands.reset()
         enrollAttempts.clear()
-        firstSeenFrame.clear()
-        lastRecognizedAtMs.clear()
+        liveTracks.reset()
         state.clearAll()
         logger.debug { "session reset (trusted persons kept: ${store.trustedPersonCount})" }
     }
@@ -81,20 +77,14 @@ class KeepVisibleOrchestrator<F>(
             store.revokeAll()
             state.clearAll()
             enrollAttempts.clear()
-            firstSeenFrame.clear()
-            lastRecognizedAtMs.clear()
+            liveTracks.reset()
             logger.debug { "revokeAll drained: trusted store wiped" }
         }
 
         val faces = boxes.filter { it.clazz == DetectionClass.FACE }
-        val liveIds = faces.map { it.id.value }.toSet()
         state.retainTracks(faces.map { it.id }.toSet())
-        enrollAttempts.keys.retainAll(liveIds)
-        firstSeenFrame.keys.retainAll(liveIds)
-        lastRecognizedAtMs.keys.retainAll(liveIds)
-        faces.forEach { firstSeenFrame.putIfAbsent(it.id.value, metadata.frameId) }
-
-        val now = nowMs()
+        enrollAttempts.keys.retainAll(faces.map { it.id.value }.toSet())
+        liveTracks.onFrame(faces, metadata)
 
         // Priority 1: pending tap. The user asked explicitly, so the STABILITY gate
         // is skipped — but the size gate still applies: an undersized face cannot
@@ -104,8 +94,8 @@ class KeepVisibleOrchestrator<F>(
         if (pendingTap != null) {
             val target = faces.firstOrNull { it.id == pendingTap }
             if (target != null) {
-                if (isIntervalElapsed(target, now) && isLargeEnough(target, metadata)) {
-                    enroll(frame, target, metadata, now)
+                if (liveTracks.isIntervalElapsed(target) && isLargeEnough(target, metadata)) {
+                    enroll(frame, target, metadata)
                 }
                 return
             }
@@ -115,20 +105,20 @@ class KeepVisibleOrchestrator<F>(
 
         // Priority 2: verify unknown/pending faces (re-identification on re-entry).
         if (store.trustedPersonCount > 0) {
-            pickDue(faces, metadata, now, config.verifyRetryIntervalFrames) {
+            pickDue(faces, metadata, config.verifyRetryIntervalFrames) {
                 it.state == VerificationState.UNKNOWN || it.state == VerificationState.PENDING
             }?.let {
-                verify(frame, it, metadata, now)
+                verify(frame, it, metadata)
                 return
             }
         }
 
         // Priority 3: periodic re-verify of trusted tracks (ID-switch defense
         // AND pipeline self-check: same person should log high similarity here).
-        pickDue(faces, metadata, now, config.reVerifyIntervalFrames) {
+        pickDue(faces, metadata, config.reVerifyIntervalFrames) {
             it.state == VerificationState.TRUSTED
         }?.let {
-            reVerify(frame, it, metadata, now)
+            reVerify(frame, it, metadata)
             return
         }
 
@@ -136,12 +126,11 @@ class KeepVisibleOrchestrator<F>(
         pickDue(
             faces,
             metadata,
-            now,
             config.reVerifyIntervalFrames * config.rejectedRecheckMultiplier
         ) {
             it.state == VerificationState.REJECTED
         }?.let {
-            verify(frame, it, metadata, now)
+            verify(frame, it, metadata)
         }
     }
 
@@ -149,25 +138,19 @@ class KeepVisibleOrchestrator<F>(
     private fun pickDue(
         faces: List<TrackedBox>,
         metadata: FrameMetadata,
-        now: Long,
         interval: Long,
         predicate: (TrackVerification) -> Boolean
     ): TrackedBox? = faces
         .filter { predicate(state.of(it.id)) }
         .filter { metadata.frameId - state.of(it.id).lastCheckedFrame >= interval }
-        .filter { canAutoCheck(it, metadata, now) }
+        .filter { canAutoCheck(it, metadata) }
         .minByOrNull { state.of(it.id).lastCheckedFrame }
 
     /** All cheap gates for the automatic (non-tap) paths. Pure arithmetic. */
-    private fun canAutoCheck(track: TrackedBox, metadata: FrameMetadata, now: Long): Boolean =
-        isIntervalElapsed(track, now) &&
+    private fun canAutoCheck(track: TrackedBox, metadata: FrameMetadata): Boolean =
+        liveTracks.isIntervalElapsed(track) &&
                 isLargeEnough(track, metadata) &&
-                isStableEnough(track, metadata)
-
-    private fun isIntervalElapsed(track: TrackedBox, now: Long): Boolean {
-        val last = lastRecognizedAtMs[track.id.value] ?: return true
-        return now - last >= config.minRecognitionIntervalMs
-    }
+                liveTracks.isStableEnough(track, metadata)
 
     /**
      * Box size in UPRIGHT pixels, on both axes.
@@ -187,12 +170,6 @@ class KeepVisibleOrchestrator<F>(
         return widthPx >= config.minFaceBoxPx && heightPx >= config.minFaceBoxPx
     }
 
-    private fun isStableEnough(track: TrackedBox, metadata: FrameMetadata): Boolean {
-        if (track.confidence < config.minTrackConfidence) return false
-        val firstSeen = firstSeenFrame[track.id.value] ?: return false
-        return metadata.frameId - firstSeen >= config.minTrackAgeFrames
-    }
-
     /**
      * Single entry point to the expensive path. Stamps the clock BEFORE the
      * call so a slow or failed pass still counts against the interval budget.
@@ -200,20 +177,18 @@ class KeepVisibleOrchestrator<F>(
     private suspend fun embed(
         frame: F,
         track: TrackedBox,
-        metadata: FrameMetadata,
-        now: Long
+        metadata: FrameMetadata
     ): FaceEmbedding? {
-        lastRecognizedAtMs[track.id.value] = now
+        liveTracks.markRecognitionAttempt(track)
         return recognizer.embed(frame, track.box, metadata)
     }
 
     private suspend fun enroll(
         frame: F,
         track: TrackedBox,
-        metadata: FrameMetadata,
-        now: Long
+        metadata: FrameMetadata
     ) {
-        val embedding = embed(frame, track, metadata, now)
+        val embedding = embed(frame, track, metadata)
         if (embedding == null) {
             val attempts = (enrollAttempts[track.id.value] ?: 0) + 1
             enrollAttempts[track.id.value] = attempts
@@ -275,11 +250,10 @@ class KeepVisibleOrchestrator<F>(
     private suspend fun verify(
         frame: F,
         track: TrackedBox,
-        metadata: FrameMetadata,
-        now: Long
+        metadata: FrameMetadata
     ) {
         val current = state.of(track.id)
-        val embedding = embed(frame, track, metadata, now)
+        val embedding = embed(frame, track, metadata)
         if (embedding == null) {
             logger.debug { "verify track=${track.id.value}: null embed (quality gate) — no decision" }
             state.set(track.id, current.copy(lastCheckedFrame = metadata.frameId))
@@ -347,11 +321,10 @@ class KeepVisibleOrchestrator<F>(
     private suspend fun reVerify(
         frame: F,
         track: TrackedBox,
-        metadata: FrameMetadata,
-        now: Long
+        metadata: FrameMetadata
     ) {
         val current = state.of(track.id)
-        val embedding = embed(frame, track, metadata, now)
+        val embedding = embed(frame, track, metadata)
         if (embedding == null) {
             logger.debug { "reVerify track=${track.id.value}: null embed — no decision" }
             state.set(track.id, current.copy(lastCheckedFrame = metadata.frameId))
@@ -367,10 +340,10 @@ class KeepVisibleOrchestrator<F>(
             // SELF-CHECK: person hasn't moved -> this similarity is your
             // pipeline health metric. Should be comfortably above threshold.
             logger.debug {
-                "reVerify track=${track.id.value}: OK person=${match.personId.value} " +
+                "reVerify track=${track.id.value}: OK person=${match!!.personId.value} " +
                         "sim=${fmt(match.similarity)}"
             }
-            store.addToGallery(match.personId, embedding)
+            store.addToGallery(match!!.personId, embedding)
             state.set(
                 track.id,
                 current.copy(

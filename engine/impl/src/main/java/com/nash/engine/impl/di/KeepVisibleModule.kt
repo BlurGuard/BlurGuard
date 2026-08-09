@@ -6,6 +6,7 @@ import com.nash.core.model.FaceRecognizer
 import com.nash.core.model.KeepVisibleStateReader
 import com.nash.core.model.KeepVisibleStateStore
 import com.nash.core.model.RecognitionConfig
+import com.nash.core.model.TimeProvider
 import com.nash.core.model.TrustedPersonStore
 import com.nash.engine.api.keepvisible.KeepVisibleController
 import com.nash.engine.api.keepvisible.KeepVisibleRecognizer
@@ -45,12 +46,16 @@ object KeepVisibleModule {
         store: TrustedPersonStore,
         state: KeepVisibleStateStore,
         config: RecognitionConfig,
+        time: TimeProvider,
         logger: RecognitionLogger,
     ): KeepVisibleOrchestrator<ImageProxy> = KeepVisibleOrchestrator(
         recognizer = recognizer,
         store = store,
         state = state,
         config = config,
+        // Monotonic like the SystemClock.uptimeMillis it replaces: cadence
+        // compares deltas only, and a wall clock could jump under NTP sync.
+        nowMs = { time.nanoTime() / NANOS_PER_MILLI },
         logger = logger,
     )
 
@@ -95,4 +100,6 @@ object KeepVisibleModule {
     fun provideKeepVisibleStateReader(
         store: KeepVisibleStateStore,
     ): KeepVisibleStateReader = store
+
+    private const val NANOS_PER_MILLI = 1_000_000L
 }
