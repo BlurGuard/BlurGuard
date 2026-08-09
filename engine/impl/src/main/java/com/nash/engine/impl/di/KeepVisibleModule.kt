@@ -9,7 +9,9 @@ import com.nash.core.model.RecognitionConfig
 import com.nash.core.model.TrustedPersonStore
 import com.nash.engine.api.keepvisible.KeepVisibleController
 import com.nash.engine.api.keepvisible.KeepVisibleRecognizer
+import com.nash.engine.impl.logging.AndroidRecognitionLogger
 import com.nash.engine.recognition.KeepVisibleOrchestrator
+import com.nash.engine.recognition.RecognitionLogger
 import com.nash.engine.recognition.SessionKeepVisibleStateStore
 import dagger.Module
 import dagger.Provides
@@ -39,17 +41,30 @@ object KeepVisibleModule {
     @Provides
     @Singleton
     fun provideKeepVisibleOrchestrator(
-        @ApplicationContext context: Context,
         recognizer: @JvmSuppressWildcards FaceRecognizer<ImageProxy>,
         store: TrustedPersonStore,
         state: KeepVisibleStateStore,
         config: RecognitionConfig,
+        logger: RecognitionLogger,
     ): KeepVisibleOrchestrator<ImageProxy> = KeepVisibleOrchestrator(
         recognizer = recognizer,
         store = store,
         state = state,
         config = config,
-        debugLogging = context.isDebugBuild(),
+        logger = logger,
+    )
+
+    /**
+     * The single place keep-visible logging meets android.util.Log. Debug
+     * tracing only in debug builds; warnings always survive (review fix:
+     * domain policy no longer imports the Android framework logger).
+     */
+    @Provides
+    @Singleton
+    fun provideRecognitionLogger(
+        @ApplicationContext context: Context,
+    ): RecognitionLogger = AndroidRecognitionLogger(
+        debugEnabled = context.isDebugBuild(),
     )
 
     /** UI-facing half: tap to keep visible, revoke everything. */

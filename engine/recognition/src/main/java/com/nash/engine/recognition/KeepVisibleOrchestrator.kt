@@ -1,7 +1,6 @@
 package com.nash.engine.recognition
 
 import android.os.SystemClock
-import android.util.Log
 import com.nash.core.model.DetectionClass
 import com.nash.core.model.FaceEmbedding
 import com.nash.core.model.FaceRecognizer
@@ -32,8 +31,8 @@ import java.util.concurrent.atomic.AtomicLong
  * blurred.
  *
  * @param nowMs wall-clock source, injectable so cadence is testable on the JVM.
- * @param debugLogging when false, the per-decision Log.d calls compile away to
- * a branch on a val; warnings always survive.
+ * @param logger logging seam; production wires an Android-backed
+ * implementation in DI, JVM tests default to [RecognitionLogger.None].
  */
 class KeepVisibleOrchestrator<F>(
     private val recognizer: FaceRecognizer<F>,
@@ -41,7 +40,7 @@ class KeepVisibleOrchestrator<F>(
     private val state: KeepVisibleStateStore,
     private val config: RecognitionConfig,
     private val nowMs: () -> Long = SystemClock::uptimeMillis,
-    private val debugLogging: Boolean = false,
+    private val logger: RecognitionLogger = RecognitionLogger.None,
 ) : KeepVisibleController, KeepVisibleRecognizer<F> {
 
     /** Written from UI, drained on ml thread. */
@@ -58,12 +57,12 @@ class KeepVisibleOrchestrator<F>(
     private val lastRecognizedAtMs = HashMap<Long, Long>()
 
     override fun requestKeepVisible(trackId: TrackId) {
-        debug { "tap: keep-visible requested for track=${trackId.value}" }
+        logger.debug { "tap: keep-visible requested for track=${trackId.value}" }
         pendingEnrollment.set(trackId.value)
     }
 
     override fun revokeAll() {
-        debug { "revokeAll requested" }
+        logger.debug { "revokeAll requested" }
         state.clearAll() // instant visual re-blur
         revokeAllRequested.set(true) // store wipe drained on ml thread
     }
@@ -74,7 +73,7 @@ class KeepVisibleOrchestrator<F>(
         firstSeenFrame.clear()
         lastRecognizedAtMs.clear()
         state.clearAll()
-        debug { "session reset (trusted persons kept: ${store.trustedPersonCount})" }
+        logger.debug { "session reset (trusted persons kept: ${store.trustedPersonCount})" }
     }
 
     override suspend fun onDetectionFrame(
@@ -88,7 +87,7 @@ class KeepVisibleOrchestrator<F>(
             enrollAttempts.clear()
             firstSeenFrame.clear()
             lastRecognizedAtMs.clear()
-            debug { "revokeAll drained: trusted store wiped" }
+            logger.debug { "revokeAll drained: trusted store wiped" }
         }
 
         val faces = boxes.filter { it.clazz == DetectionClass.FACE }
@@ -114,7 +113,7 @@ class KeepVisibleOrchestrator<F>(
                 }
                 return
             }
-            debug { "tap: track=$pendingValue no longer alive, dropping request" }
+            logger.debug { "tap: track=$pendingValue no longer alive, dropping request" }
             pendingEnrollment.compareAndSet(pendingValue, NO_REQUEST)
         }
 
@@ -222,7 +221,7 @@ class KeepVisibleOrchestrator<F>(
         if (embedding == null) {
             val attempts = (enrollAttempts[track.id.value] ?: 0) + 1
             enrollAttempts[track.id.value] = attempts
-            debug {
+            logger.debug {
                 "enroll track=${track.id.value}: null embed, " +
                         "attempt $attempts/${config.maxEnrollAttempts}"
             }
@@ -236,7 +235,7 @@ class KeepVisibleOrchestrator<F>(
                         lastCheckedFrame = metadata.frameId
                     )
                 )
-                Log.w(TAG, "enroll track=${track.id.value}: GAVE UP — quality gates never passed")
+                logger.warn("enroll track=${track.id.value}: GAVE UP — quality gates never passed")
             } else {
                 state.set(
                     track.id,
@@ -252,7 +251,7 @@ class KeepVisibleOrchestrator<F>(
         enrollAttempts.remove(track.id.value)
         val match = store.bestMatch(embedding)
         val personId = if (match != null && match.similarity >= config.matchThreshold) {
-            debug {
+            logger.debug {
                 "enroll track=${track.id.value}: matched existing person=${match.personId.value} " +
                         "sim=${fmt(match.similarity)} -> reusing"
             }
@@ -260,7 +259,7 @@ class KeepVisibleOrchestrator<F>(
             match.personId
         } else {
             val newId = store.enroll(embedding)
-            debug {
+            logger.debug {
                 "enroll track=${track.id.value}: NEW person=${newId.value} " +
                         "(bestExisting=${match?.similarity?.let(::fmt) ?: "none"})"
             }
@@ -286,13 +285,13 @@ class KeepVisibleOrchestrator<F>(
         val current = state.of(track.id)
         val embedding = embed(frame, track, metadata, now)
         if (embedding == null) {
-            debug { "verify track=${track.id.value}: null embed (quality gate) — no decision" }
+            logger.debug { "verify track=${track.id.value}: null embed (quality gate) — no decision" }
             state.set(track.id, current.copy(lastCheckedFrame = metadata.frameId))
             return
         }
 
         val match = store.bestMatch(embedding)
-        debug {
+        logger.debug {
             "verify track=${track.id.value}: best=${match?.similarity?.let(::fmt) ?: "none"} " +
                     "person=${match?.personId?.value} threshold=${fmt(config.matchThreshold)}"
         }
@@ -310,7 +309,7 @@ class KeepVisibleOrchestrator<F>(
                         lastCheckedFrame = metadata.frameId
                     )
                 )
-                debug {
+                logger.debug {
                     "verify track=${track.id.value}: TRUSTED as person=${match.personId.value} " +
                             "sim=${fmt(match.similarity)}"
                 }
@@ -344,7 +343,7 @@ class KeepVisibleOrchestrator<F>(
                 )
             )
             if (newState == VerificationState.REJECTED) {
-                Log.w(TAG, "verify track=${track.id.value}: REJECTED after $mismatches mismatches")
+                logger.warn("verify track=${track.id.value}: REJECTED after $mismatches mismatches")
             }
         }
     }
@@ -358,7 +357,7 @@ class KeepVisibleOrchestrator<F>(
         val current = state.of(track.id)
         val embedding = embed(frame, track, metadata, now)
         if (embedding == null) {
-            debug { "reVerify track=${track.id.value}: null embed — no decision" }
+            logger.debug { "reVerify track=${track.id.value}: null embed — no decision" }
             state.set(track.id, current.copy(lastCheckedFrame = metadata.frameId))
             return
         }
@@ -371,7 +370,7 @@ class KeepVisibleOrchestrator<F>(
         if (samePerson) {
             // SELF-CHECK: person hasn't moved -> this similarity is your
             // pipeline health metric. Should be comfortably above threshold.
-            debug {
+            logger.debug {
                 "reVerify track=${track.id.value}: OK person=${match.personId.value} " +
                         "sim=${fmt(match.similarity)}"
             }
@@ -385,8 +384,7 @@ class KeepVisibleOrchestrator<F>(
             )
         } else {
             val mismatches = current.consecutiveMismatches + 1
-            Log.w(
-                TAG,
+            logger.warn(
                 "reVerify track=${track.id.value}: MISMATCH " +
                         "best=${match?.similarity?.let(::fmt) ?: "none"} " +
                         "bestPerson=${match?.personId?.value} " +
@@ -401,7 +399,7 @@ class KeepVisibleOrchestrator<F>(
                         lastCheckedFrame = metadata.frameId
                     )
                 )
-                Log.w(TAG, "reVerify track=${track.id.value}: REVOKED (possible ID switch)")
+                logger.warn("reVerify track=${track.id.value}: REVOKED (possible ID switch)")
             } else {
                 state.set(
                     track.id,
@@ -416,12 +414,7 @@ class KeepVisibleOrchestrator<F>(
 
     private fun fmt(v: Float) = "%.3f".format(v)
 
-    private inline fun debug(message: () -> String) {
-        if (debugLogging) Log.d(TAG, message())
-    }
-
     private companion object {
-        const val TAG = "KeepVisible"
         /** Sentinel for "no pending enrollment" — real TrackIds start at 1. */
         const val NO_REQUEST = Long.MIN_VALUE
     }
