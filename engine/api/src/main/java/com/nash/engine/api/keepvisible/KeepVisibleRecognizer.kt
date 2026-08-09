@@ -7,7 +7,7 @@ import com.nash.core.model.TrackedBox
  * The recognition half of keep-visible, as seen by the pipeline.
  *
  * Exists so the pipeline can be unit-tested without a TFLite recognizer,
- * trusted-person store or config. Implemented by KeepVisibleOrchestrator in
+ * trusted-person store or config. Implemented by KeepVisibleRecognizerImpl in
  * engine/recognition — which is why this contract lives in engine/api rather
  * than being internal to engine/impl.
  */

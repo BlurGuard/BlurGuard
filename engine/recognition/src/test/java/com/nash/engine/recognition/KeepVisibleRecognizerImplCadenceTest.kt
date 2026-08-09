@@ -23,7 +23,7 @@ import org.junit.Test
  * not called, AND the track stayed blurred. Cheaper is only correct if it is
  * also fail-closed.
  */
-class KeepVisibleOrchestratorCadenceTest {
+class KeepVisibleRecognizerImplCadenceTest {
 
     /** Counts calls so "cheaper" is measured, not assumed. */
     private class CountingRecognizer(var next: () -> FaceEmbedding?) : FaceRecognizer<Unit> {
@@ -56,12 +56,23 @@ class KeepVisibleOrchestratorCadenceTest {
     private val state = SessionKeepVisibleStateStore()
     private val store = SessionTrustedPersonStore(maxGallerySize = 5, duplicateSimilarity = 0.95f)
     private val recognizer = CountingRecognizer { alice }
-    private val orchestrator = KeepVisibleOrchestrator(
-        recognizer = recognizer,
-        store = store,
+    private val commands = KeepVisibleCommandQueue()
+    private val liveTracks = LiveTrackRegistry(config) { clockMs }
+    private val gate = RecognitionGate(config, liveTracks)
+    private val controller = KeepVisibleControllerImpl(commands, state)
+    private val keepVisible = KeepVisibleRecognizerImpl(
+        commands = commands,
+        liveTracks = liveTracks,
+        selector = RecognitionCandidateSelector(
+            commands, liveTracks, gate, state, store, config
+        ),
+        enrollmentPolicy = EnrollmentPolicy(
+            recognizer, store, state, commands, liveTracks, config
+        ),
+        verificationPolicy = VerificationPolicy(recognizer, store, state, liveTracks, config),
+        reVerificationPolicy = ReVerificationPolicy(recognizer, store, state, liveTracks, config),
         state = state,
-        config = config,
-        nowMs = { clockMs }
+        store = store,
     )
 
     private val alice = FaceEmbedding.fromRaw(floatArrayOf(1f, 0f, 0f))!!
@@ -89,7 +100,7 @@ class KeepVisibleOrchestratorCadenceTest {
 
     private fun frame(frameId: Long, atMs: Long, vararg boxes: TrackedBox) = runBlocking {
         clockMs = atMs
-        orchestrator.onDetectionFrame(Unit, metadata(frameId), boxes.toList())
+        keepVisible.onDetectionFrame(Unit, metadata(frameId), boxes.toList())
     }
 
     private fun isKeptVisible(track: TrackedBox): Boolean =
@@ -99,7 +110,7 @@ class KeepVisibleOrchestratorCadenceTest {
     fun `a tap cannot re-embed the same track faster than the interval`() {
         // Embeds keep failing, so the tap path retries — the worst case.
         recognizer.next = { null }
-        orchestrator.requestKeepVisible(TrackId(1))
+        controller.requestKeepVisible(TrackId(1))
 
         frame(0, atMs = 0, face(1))
         assertEquals(1, recognizer.calls)
@@ -118,7 +129,7 @@ class KeepVisibleOrchestratorCadenceTest {
     @Test
     fun `a face below the pre-gate never reaches the recognizer`() {
         recognizer.next = { alice }
-        orchestrator.requestKeepVisible(TrackId(1))
+        controller.requestKeepVisible(TrackId(1))
 
         repeat(12) { i ->
             frame(i.toLong(), atMs = i * 200L, tinyFace(1))
@@ -134,7 +145,7 @@ class KeepVisibleOrchestratorCadenceTest {
     fun `a low-confidence box is never auto-verified`() {
         // Give the store someone to match against, so priority 2 is live.
         recognizer.next = { alice }
-        orchestrator.requestKeepVisible(TrackId(1))
+        controller.requestKeepVisible(TrackId(1))
         frame(0, atMs = 0, face(1))
         val afterEnroll = recognizer.calls
 
@@ -151,7 +162,7 @@ class KeepVisibleOrchestratorCadenceTest {
     @Test
     fun `a freshly seen track waits until it is stable`() {
         recognizer.next = { alice }
-        orchestrator.requestKeepVisible(TrackId(1))
+        controller.requestKeepVisible(TrackId(1))
         frame(0, atMs = 0, face(1))
         val afterEnroll = recognizer.calls
 
@@ -170,7 +181,7 @@ class KeepVisibleOrchestratorCadenceTest {
         recognizer.next = { alice }
 
         // Brand-new track, tapped on its very first frame: recognized anyway.
-        orchestrator.requestKeepVisible(TrackId(7))
+        controller.requestKeepVisible(TrackId(7))
         frame(0, atMs = 0, face(7))
         assertEquals(1, recognizer.calls)
         assertEquals(VerificationState.TRUSTED, state.of(TrackId(7)).state)
@@ -179,7 +190,7 @@ class KeepVisibleOrchestratorCadenceTest {
     @Test
     fun `re-verification of a trusted track respects the wall-clock floor`() {
         recognizer.next = { alice }
-        orchestrator.requestKeepVisible(TrackId(1))
+        controller.requestKeepVisible(TrackId(1))
         frame(0, atMs = 0, face(1))
         val afterEnroll = recognizer.calls
         assertTrue(isKeptVisible(face(1)))

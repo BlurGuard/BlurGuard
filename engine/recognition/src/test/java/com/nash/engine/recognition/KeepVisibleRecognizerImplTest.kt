@@ -19,15 +19,17 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Trust-policy tests for the orchestrator. Moved here with the class it
- * covers (review fix 16); the store and gallery it drives are now
+ * Trust-policy tests for the keep-visible recognizer, driven end to end
+ * through the controller/recognizer pair sharing one command queue and one
+ * state store — exactly the production wiring. Moved here with the classes
+ * they cover (review fix 16); the store and gallery they drive are
  * same-package collaborators rather than core/model classes.
  *
  * The clock advances with the frame id at 30 fps, so the wall-clock floor
  * added for review fix 21 behaves as it does on a healthy device. Cadence
- * itself is covered in KeepVisibleOrchestratorCadenceTest.
+ * itself is covered in KeepVisibleRecognizerImplCadenceTest.
  */
-class KeepVisibleOrchestratorTest {
+class KeepVisibleRecognizerImplTest {
 
     private class FakeRecognizer(var next: () -> FaceEmbedding?) : FaceRecognizer<Unit> {
         override suspend fun embed(frame: Unit, faceBox: BoundingBox, metadata: FrameMetadata) = next()
@@ -44,12 +46,23 @@ class KeepVisibleOrchestratorTest {
     private val state = SessionKeepVisibleStateStore()
     private val store = SessionTrustedPersonStore(maxGallerySize = 5, duplicateSimilarity = 0.95f)
     private val recognizer = FakeRecognizer { null }
-    private val orchestrator = KeepVisibleOrchestrator(
-        recognizer = recognizer,
-        store = store,
+    private val commands = KeepVisibleCommandQueue()
+    private val liveTracks = LiveTrackRegistry(config) { clockMs }
+    private val gate = RecognitionGate(config, liveTracks)
+    private val controller = KeepVisibleControllerImpl(commands, state)
+    private val keepVisible = KeepVisibleRecognizerImpl(
+        commands = commands,
+        liveTracks = liveTracks,
+        selector = RecognitionCandidateSelector(
+            commands, liveTracks, gate, state, store, config
+        ),
+        enrollmentPolicy = EnrollmentPolicy(
+            recognizer, store, state, commands, liveTracks, config
+        ),
+        verificationPolicy = VerificationPolicy(recognizer, store, state, liveTracks, config),
+        reVerificationPolicy = ReVerificationPolicy(recognizer, store, state, liveTracks, config),
         state = state,
-        config = config,
-        nowMs = { clockMs }
+        store = store,
     )
 
     private val alice = FaceEmbedding.fromRaw(floatArrayOf(1f, 0f, 0f))!!
@@ -72,7 +85,7 @@ class KeepVisibleOrchestratorTest {
     /** Advances the clock in step with the frame id: 30 fps. */
     private fun frame(frameId: Long, vararg boxes: TrackedBox) = runBlocking {
         clockMs = frameId * MS_PER_FRAME
-        orchestrator.onDetectionFrame(Unit, metadata(frameId), boxes.toList())
+        keepVisible.onDetectionFrame(Unit, metadata(frameId), boxes.toList())
     }
 
     /** Runs the real render gate over a single track, as the pipeline would. */
@@ -82,7 +95,7 @@ class KeepVisibleOrchestratorTest {
     @Test
     fun `tap enrolls and trusts immediately`() {
         recognizer.next = { alice }
-        orchestrator.requestKeepVisible(TrackId(1))
+        controller.requestKeepVisible(TrackId(1))
         frame(1, face(1))
         assertEquals(VerificationState.TRUSTED, state.of(TrackId(1)).state)
         assertEquals(1, store.trustedPersonCount)
@@ -92,7 +105,7 @@ class KeepVisibleOrchestratorTest {
     @Test
     fun `re-entry needs K consecutive matches before unblurring`() {
         recognizer.next = { alice }
-        orchestrator.requestKeepVisible(TrackId(1))
+        controller.requestKeepVisible(TrackId(1))
         frame(1, face(1))
 
         // Track 1 died; same person returns as track 2. The first sighting
@@ -114,7 +127,7 @@ class KeepVisibleOrchestratorTest {
     fun `a stranger is rejected and stays blurred`(): Unit = runTest {
         // Enroll alice on track 1.
         recognizer.next = { alice }
-        orchestrator.requestKeepVisible(TrackId(1))
+        controller.requestKeepVisible(TrackId(1))
         frame(0, face(1))
 
         // A stranger appears on track 2 (first sighting registers the track).
@@ -135,7 +148,7 @@ class KeepVisibleOrchestratorTest {
     @Test
     fun `null embedding is no decision, not a mismatch`() {
         recognizer.next = { alice }
-        orchestrator.requestKeepVisible(TrackId(1))
+        controller.requestKeepVisible(TrackId(1))
         frame(1, face(1))
 
         recognizer.next = { null }
@@ -151,7 +164,7 @@ class KeepVisibleOrchestratorTest {
     @Test
     fun `trusted track stolen by an ID switch is revoked after mismatches`() {
         recognizer.next = { alice }
-        orchestrator.requestKeepVisible(TrackId(1))
+        controller.requestKeepVisible(TrackId(1))
         frame(1, face(1))
 
         // Re-verification now sees a different face on the same track id.
@@ -166,10 +179,10 @@ class KeepVisibleOrchestratorTest {
     @Test
     fun `revokeAll re-blurs and wipes the store`() {
         recognizer.next = { alice }
-        orchestrator.requestKeepVisible(TrackId(1))
+        controller.requestKeepVisible(TrackId(1))
         frame(1, face(1))
 
-        orchestrator.revokeAll()
+        controller.revokeAll()
         assertFalse(isKeptVisible(1))
         frame(2, face(1)) // flag drained on ml thread
         assertEquals(0, store.trustedPersonCount)

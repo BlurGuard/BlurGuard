@@ -16,12 +16,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
-
-    testOptions {
-        // The orchestrator logs through android.util.Log; JVM unit tests must
-        // not explode on the stubbed framework.
-        unitTests.isReturnDefaultValues = true
-    }
 }
 
 dependencies {
