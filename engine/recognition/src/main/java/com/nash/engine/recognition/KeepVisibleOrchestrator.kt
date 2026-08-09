@@ -32,6 +32,8 @@ import com.nash.engine.api.keepvisible.KeepVisibleRecognizer
  * on the JVM; production passes a TimeProvider-backed source from DI.
  * @param liveTracks per-track bookkeeping (age, attempt clock) and the
  * stability/interval gates derived from it.
+ * @param gate cheap arithmetic gates (geometry plus the composed auto-path
+ * check) guarding the expensive recognizer path.
  * @param logger logging seam; production wires an Android-backed
  * implementation in DI, JVM tests default to [RecognitionLogger.None].
  */
@@ -43,6 +45,7 @@ class KeepVisibleOrchestrator<F>(
     private val commands: KeepVisibleCommandQueue = KeepVisibleCommandQueue(),
     private val nowMs: () -> Long,
     private val liveTracks: LiveTrackRegistry = LiveTrackRegistry(config, nowMs),
+    private val gate: RecognitionGate = RecognitionGate(config, liveTracks),
     private val logger: RecognitionLogger = RecognitionLogger.None,
 ) : KeepVisibleController, KeepVisibleRecognizer<F> {
 
@@ -94,7 +97,7 @@ class KeepVisibleOrchestrator<F>(
         if (pendingTap != null) {
             val target = faces.firstOrNull { it.id == pendingTap }
             if (target != null) {
-                if (liveTracks.isIntervalElapsed(target) && isLargeEnough(target, metadata)) {
+                if (liveTracks.isIntervalElapsed(target) && gate.isLargeEnough(target, metadata)) {
                     enroll(frame, target, metadata)
                 }
                 return
@@ -143,32 +146,8 @@ class KeepVisibleOrchestrator<F>(
     ): TrackedBox? = faces
         .filter { predicate(state.of(it.id)) }
         .filter { metadata.frameId - state.of(it.id).lastCheckedFrame >= interval }
-        .filter { canAutoCheck(it, metadata) }
+        .filter { gate.canAutoCheck(it, metadata) }
         .minByOrNull { state.of(it.id).lastCheckedFrame }
-
-    /** All cheap gates for the automatic (non-tap) paths. Pure arithmetic. */
-    private fun canAutoCheck(track: TrackedBox, metadata: FrameMetadata): Boolean =
-        liveTracks.isIntervalElapsed(track) &&
-                isLargeEnough(track, metadata) &&
-                liveTracks.isStableEnough(track, metadata)
-
-    /**
-     * Box size in UPRIGHT pixels, on both axes.
-     *
-     * [FrameMetadata.width] and [FrameMetadata.height] describe the raw buffer,
-     * but [TrackedBox.box] is normalized against the upright frame — the same
-     * space the recognizer crops in after rotating. At 90/270 those two are
-     * transposed, so the dimensions must be swapped before measuring, or the
-     * height of a face is compared against the width of the frame.
-     */
-    private fun isLargeEnough(track: TrackedBox, metadata: FrameMetadata): Boolean {
-        val transposed = metadata.rotationDegrees % 180 != 0
-        val uprightWidth = if (transposed) metadata.height else metadata.width
-        val uprightHeight = if (transposed) metadata.width else metadata.height
-        val widthPx = (track.box.right - track.box.left) * uprightWidth
-        val heightPx = (track.box.bottom - track.box.top) * uprightHeight
-        return widthPx >= config.minFaceBoxPx && heightPx >= config.minFaceBoxPx
-    }
 
     /**
      * Single entry point to the expensive path. Stamps the clock BEFORE the
