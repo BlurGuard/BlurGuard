@@ -18,7 +18,7 @@
     <string name="warning_high_latency">الكشف يعمل ببطء — قد يتأخر التمويه عن الفيديو.</string>
     <string name="warning_storage_low">مساحة التخزين شبه ممتلئة. قد يفشل التسجيل.</string>
     <string name="warning_camera_timed_out">توقفت الكاميرا عن الاستجابة. جرّب إعادة تشغيل التطبيق.</string>
-    <string name="warning_camera_session_error">تعذّر تشغيل الكاميرا. حاول مرة أخرى أو أعد تشغيل التطبيق.</string>
+    <string name="warning_camera_session_error">تعذّر تشغيل الكاميرا. حاول مجددًا أو أعد تشغيل التطبيق.</string>
     <string name="warning_detection_degraded">تدهور الكشف — قد تبقى بعض العناصر ظاهرة مؤقتًا.</string>
 
     <!-- tracking_overlay_face_prefix / tracking_overlay_plate_prefix intentionally

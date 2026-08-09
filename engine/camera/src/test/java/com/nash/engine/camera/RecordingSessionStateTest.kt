@@ -8,6 +8,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -138,16 +139,28 @@ class RecordingSessionStateTest {
     }
 
     @Test
-    fun `clearFinalize drops the deferred so a later finish completes nothing`() {
+    fun `finish clears the stored deferred so a recording started mid-stop keeps its own`() {
         runBlocking {
             state.attach(FakeRecorder(), directExecutor)
             state.start { _, _ -> FakeRecording() }
-            val claim = state.claimStop()
+            val firstClaim = state.claimStop()
+            val firstResult = RecordingStopResult.Saved(uri = "content://media/video/1")
 
-            state.clearFinalize()
-            state.finish(RecordingStopResult.Failure(message = "boom", cause = null))
+            // Finalize completes the first recording...
+            state.finish(firstResult)
+            // ...and a new recording starts before the stop caller resumes.
+            state.start { _, _ -> FakeRecording() }
+            val secondClaim = state.claimStop()
 
-            assertFalse(claim?.finalizeResult?.isCompleted ?: true)
+            // The stop caller's own deferred has its result; the new
+            // recording's deferred is a fresh, untouched instance.
+            assertEquals(firstResult, firstClaim?.finalizeResult?.await())
+            assertNotSame(firstClaim?.finalizeResult, secondClaim?.finalizeResult)
+            assertFalse(secondClaim?.finalizeResult?.isCompleted ?: true)
+
+            val secondResult = RecordingStopResult.Failure(message = "boom", cause = null)
+            state.finish(secondResult)
+            assertEquals(secondResult, secondClaim?.finalizeResult?.await())
         }
     }
 

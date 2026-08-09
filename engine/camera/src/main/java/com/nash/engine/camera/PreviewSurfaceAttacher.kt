@@ -20,15 +20,20 @@ import javax.inject.Singleton
  * The attached view only ever renders the processed (anonymized) stream:
  * the [Preview] use case set here is bound inside the UseCaseGroup carrying
  * the anonymization CameraEffect, and raw surfaces never leave this module.
+ *
+ * Threading: strictly main-thread confined. Every caller — the facade's
+ * [createPreviewView]/[attachPreviewView] entry points and the session
+ * binder/releaser's [setPreview] calls — runs on the main thread (CameraX
+ * requires it for surface wiring), so the fields below need no
+ * synchronization or `@Volatile`.
  */
 @Singleton
 class PreviewSurfaceAttacher @Inject constructor(
     private val previewViewFactory: CameraPreviewViewFactory,
 ) {
 
-    @Volatile
+    // Both fields are main-thread confined; see class KDoc.
     private var previewView: PreviewView? = null
-
     private var preview: Preview? = null
 
     /** Creates, stores, and (if a preview is set) attaches a new [PreviewView]. */

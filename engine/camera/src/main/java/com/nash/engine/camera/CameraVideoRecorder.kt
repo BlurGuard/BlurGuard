@@ -131,10 +131,12 @@ class CameraVideoRecorder @Inject constructor(
 
             try {
                 claim.recording.stop()
-                val result = claim.finalizeResult?.await()
+                // The stored finalize deferred is cleared by the Finalize event
+                // via RecordingSessionState.finish(), never by this caller, so
+                // a recording started while we await can never lose its own
+                // fresh deferred to this stop's cleanup.
+                claim.finalizeResult?.await()
                     ?: RecordingStopResult.Failure("Recording did not finalize")
-                sessionState.clearFinalize()
-                result
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

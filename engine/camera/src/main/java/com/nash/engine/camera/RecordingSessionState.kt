@@ -87,27 +87,28 @@ internal class RecordingSessionState<RecorderT : Any, RecordingT : Any> {
      * Claims the active recording for stopping, or null when none is active.
      * The active recording is cleared by [finish] (normal finalize) or by
      * [clearActiveRecording] (quiet cancel), never by claiming.
+     *
+     * Double-stop is safe: two concurrent stop callers may both claim the
+     * same recording and both call stop() on it — CameraX makes the second
+     * stop a no-op, and both callers await the same finalize deferred, so
+     * both observe the single finalize result.
      */
     suspend fun claimStop(): StopClaim<RecordingT>? = mutex.withLock {
         val recording = activeRecording ?: return@withLock null
         StopClaim(recording, finalizeResult)
     }
 
-    /** Clears the finalize deferred once a stop caller has consumed its result. */
-    suspend fun clearFinalize() {
-        mutex.withLock {
-            finalizeResult = null
-        }
-    }
-
     /**
-     * Records the finalize outcome: clears the active recording and completes
-     * the finalize deferred for any awaiting stop caller.
+     * Records the finalize outcome: clears the active recording, completes
+     * the finalize deferred for any awaiting stop caller (who holds its own
+     * reference via [StopClaim]), and clears the stored deferred here so it
+     * can never be confused with a later recording's fresh deferred.
      */
     suspend fun finish(result: RecordingStopResult) {
         mutex.withLock {
             activeRecording = null
             finalizeResult?.complete(result)
+            finalizeResult = null
         }
     }
 
