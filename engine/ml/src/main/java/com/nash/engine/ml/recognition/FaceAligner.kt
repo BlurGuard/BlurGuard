@@ -2,23 +2,12 @@ package com.nash.engine.ml.recognition
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.Canvas
 import android.graphics.Matrix
-import android.graphics.Paint
-import android.util.Log
-import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.tasks.components.containers.Detection
-import com.google.mediapipe.tasks.core.BaseOptions
-import com.google.mediapipe.tasks.vision.core.RunningMode
-import com.google.mediapipe.tasks.vision.facedetector.FaceDetector
 import com.nash.core.model.RecognitionConfig
 import com.nash.engine.ml.isDebugBuild
 import java.util.Locale
-import kotlin.math.abs
-import kotlin.math.atan2
-import kotlin.math.hypot
 import kotlin.math.roundToInt
-import androidx.core.graphics.createBitmap
 
 /**
  * Turns a loose face crop into the 112x112 canonical view MobileFaceNet expects.
@@ -42,10 +31,15 @@ import androidx.core.graphics.createBitmap
 internal class FaceAligner(
     context: Context,
     private val config: RecognitionConfig,
+    private val detector: FaceLandmarkDetector = MediaPipeFaceLandmarkDetector(context.applicationContext),
+    private val logger: FaceAlignmentLogger = AndroidFaceAlignmentLogger(
+        enabled = context.applicationContext.isDebugBuild(),
+    ),
 ) {
-    private val appContext = context.applicationContext
-    private val debugLogging = appContext.isDebugBuild()
-    private val filterPaint = Paint(Paint.FILTER_BITMAP_FLAG)
+    private val probeStrategy = RotationProbeStrategy()
+    private val keypointExtractor = FaceKeypointExtractor()
+    private val qualityGate = FaceQualityGate(config)
+    private val renderer = AlignedFaceRenderer()
 
     /**
      * Orientation that last produced a usable alignment, tried first on the next
@@ -58,18 +52,6 @@ internal class FaceAligner(
     @Volatile
     private var preferredRotation = 0
 
-    private val detector: FaceDetector by lazy {
-        val baseOptions = BaseOptions.builder()
-            .setModelAssetPath(MODEL_ASSET)
-            .build()
-        val options = FaceDetector.FaceDetectorOptions.builder()
-            .setBaseOptions(baseOptions)
-            .setMinDetectionConfidence(MIN_LANDMARK_DETECTION_CONFIDENCE)
-            .setRunningMode(RunningMode.IMAGE)
-            .build()
-        FaceDetector.createFromOptions(appContext, options)
-    }
-
     /**
      * @return the aligned 112x112 crop, or null if no probed orientation yielded
      * a single frontal face with usable eye landmarks.
@@ -77,138 +59,70 @@ internal class FaceAligner(
     fun align(faceCrop: Bitmap): Bitmap? {
         // Rotation cannot rescue a crop that is too small to carry a face, so
         // this gate runs once instead of once per probe.
-        if (faceCrop.width < config.minFaceCropPx || faceCrop.height < config.minFaceCropPx) {
-            debug { "gate: crop too small ${dims(faceCrop)} (min ${config.minFaceCropPx})" }
-            return null
+        when (val cropSize = qualityGate.validateCropSize(faceCrop)) {
+            QualityResult.Valid -> Unit
+            is QualityResult.Invalid -> {
+                logger.debug { cropSize.reason }
+                return null
+            }
         }
 
-        var firstFailure: String? = null
-        for (degrees in probeOrder()) {
+        var firstFailure: AlignmentFailure? = null
+        for (degrees in probeStrategy.order(preferredRotation)) {
             val probe = if (degrees == 0) faceCrop else faceCrop.rotated(degrees)
-            val outcome = attempt(probe)
+            val result = alignProbe(probe)
             if (probe !== faceCrop) {
                 probe.recycle()
             }
-            when (outcome) {
-                is Outcome.Success -> {
+            when (result) {
+                is AlignmentResult.Success -> {
                     preferredRotation = degrees
-                    debug {
+                    logger.debug {
                         val suffix = if (degrees == 0) "" else " probe=${degrees}deg"
-                        "aligned: ${outcome.summary}$suffix"
+                        "aligned: ${result.summary}$suffix"
                     }
-                    return outcome.aligned
+                    return result.aligned
                 }
 
-                is Outcome.Failure -> if (firstFailure == null) firstFailure = outcome.reason
+                is AlignmentResult.Failure -> if (firstFailure == null) firstFailure = result.failure
             }
         }
 
-        debug { "gate: ${firstFailure.orEmpty()} (all probes failed)" }
+        logger.debug { "gate: ${firstFailure?.reason.orEmpty()} (all probes failed)" }
         return null
     }
 
-    private fun attempt(crop: Bitmap): Outcome {
-        val detections = detector.detect(BitmapImageBuilder(crop).build()).detections()
-        if (detections.size != 1) {
-            return Outcome.Failure("${detections.size} detections in crop ${dims(crop)}")
+    private fun alignProbe(crop: Bitmap): AlignmentResult {
+        val detectionResult = detectSingleFace(crop)
+        val detection = when (detectionResult) {
+            is DetectionResult.SingleFace -> detectionResult.detection
+            is DetectionResult.Failure -> return AlignmentResult.Failure(detectionResult.failure)
         }
 
-        val detection = detections[0]
-        val keypoints = detection.keypoints().orElse(null)
-        if (keypoints == null || keypoints.size < REQUIRED_KEYPOINTS) {
-            return Outcome.Failure(
-                "only ${keypoints?.size ?: 0} keypoints ${dims(crop)} ${where(detection, crop)}"
-            )
+        val keypointResult = extractKeypoints(detection, crop)
+        val faceKeypoints = when (keypointResult) {
+            is KeypointResult.Success -> keypointResult.keypoints
+            is KeypointResult.Failure -> return AlignmentResult.Failure(keypointResult.failure)
         }
 
-        val width = crop.width.toFloat()
-        val height = crop.height.toFloat()
-        val first = floatArrayOf(
-            keypoints[KP_LEFT_EYE].x() * width,
-            keypoints[KP_LEFT_EYE].y() * height,
-        )
-        val second = floatArrayOf(
-            keypoints[KP_RIGHT_EYE].x() * width,
-            keypoints[KP_RIGHT_EYE].y() * height,
-        )
-        // BlazeFace reports the subject's own left and right eye. Order by image
-        // x so the transform always receives the image-left eye first.
-        val leftIsFirst = first[0] <= second[0]
-        val leftEye = if (leftIsFirst) first else second
-        val rightEye = if (leftIsFirst) second else first
-        val nose = floatArrayOf(
-            keypoints[KP_NOSE].x() * width,
-            keypoints[KP_NOSE].y() * height,
-        )
-
-        val eyeDx = rightEye[0] - leftEye[0]
-        val eyeDy = rightEye[1] - leftEye[1]
-        val interEye = hypot(eyeDx, eyeDy)
-        val rollDeg = roll(eyeDx, eyeDy)
-
-        if (interEye < MIN_INTER_EYE_PX) {
-            return Outcome.Failure(
-                "interEye=${fmt(interEye)}px < ${fmt(MIN_INTER_EYE_PX)} roll=${fmt(rollDeg)}deg " +
-                        "${dims(crop)} ${where(detection, crop)}"
-            )
+        val qualityFailure = validateQuality(faceKeypoints, detection, crop)
+        if (qualityFailure != null) {
+            return AlignmentResult.Failure(qualityFailure)
         }
 
-        // Unit vector along the eye axis, so the frontality test is independent
-        // of head roll.
-        val axisX = eyeDx / interEye
-        val axisY = eyeDy / interEye
-        val midX = (leftEye[0] + rightEye[0]) / 2f
-        val midY = (leftEye[1] + rightEye[1]) / 2f
-        val noseDx = nose[0] - midX
-        val noseDy = nose[1] - midY
-        // Along the eye axis this is yaw. Perpendicular to it this is just the
-        // nose sitting below the eyes, which every face has; it is logged for
-        // context but never gated on.
-        val yaw = abs(noseDx * axisX + noseDy * axisY)
-        val perp = abs(noseDx * -axisY + noseDy * axisX)
-        val maxYaw = interEye * MAX_NOSE_OFFSET_RATIO
-
-        if (yaw > maxYaw) {
-            return Outcome.Failure(
-                "not frontal yaw=${fmt(yaw)} (ratio ${fmt(yaw / interEye)}) perp=${fmt(perp)} " +
-                        "interEye=${fmt(interEye)} max=${fmt(maxYaw)} roll=${fmt(rollDeg)}deg " +
-                        "${dims(crop)} ${where(detection, crop)}"
-            )
-        }
-
-        // fromEyes returns the six affine coefficients [a, b, tx, c, d, ty] in
-        // Matrix.setValues() row-major order, not a Matrix. It only returns null
-        // for a near-coincident eye pair, which MIN_INTER_EYE_PX already rules
-        // out, but the branch stays fail-closed rather than asserting.
-        val coefficients = SimilarityTransform.fromEyes(leftEye, rightEye)
-            ?: return Outcome.Failure(
-                "degenerate eye pair interEye=${fmt(interEye)} ${dims(crop)} " +
-                        where(detection, crop)
-            )
-        val transform = Matrix().apply {
-            setValues(
-                floatArrayOf(
-                    coefficients[0], coefficients[1], coefficients[2],
-                    coefficients[3], coefficients[4], coefficients[5],
-                    0f, 0f, 1f,
+        val metrics = FaceQualityMetrics.from(faceKeypoints)
+        val aligned = renderer.render(crop, faceKeypoints)
+            ?: return AlignmentResult.Failure(
+                AlignmentFailure(
+                    "degenerate eye pair interEye=${metrics.interEye.format()} ${crop.dims()} " +
+                            detection.where(crop)
                 )
             )
-        }
 
-        val aligned =
-            createBitmap(SimilarityTransform.OUTPUT_SIZE, SimilarityTransform.OUTPUT_SIZE)
-        Canvas(aligned).drawBitmap(crop, transform, filterPaint)
-
-        return Outcome.Success(
+        return AlignmentResult.Success(
             aligned = aligned,
-            summary = "interEye=${fmt(interEye)} roll=${fmt(rollDeg)}deg ${dims(crop)}",
+            summary = "interEye=${metrics.interEye.format()} roll=${metrics.rollDeg.format()}deg ${crop.dims()}",
         )
-    }
-
-    private fun probeOrder(): IntArray = when (preferredRotation) {
-        90 -> PROBE_ORDER_90
-        270 -> PROBE_ORDER_270
-        else -> PROBE_ORDER_0
     }
 
     private fun Bitmap.rotated(degrees: Int): Bitmap {
@@ -216,58 +130,74 @@ internal class FaceAligner(
         return Bitmap.createBitmap(this, 0, 0, width, height, matrix, true)
     }
 
-    private fun dims(bitmap: Bitmap): String = "crop=${bitmap.width}x${bitmap.height}"
-
-    private fun where(detection: Detection, crop: Bitmap): String {
-        val box = detection.boundingBox()
-        val cover = box.width() * box.height() / (crop.width.toFloat() * crop.height.toFloat()) * 100f
-        return "det=${box.left.roundToInt()},${box.top.roundToInt()} " +
-                "${box.width().roundToInt()}x${box.height().roundToInt()} cover=${fmt(cover)}%"
-    }
-
-    private fun roll(eyeDx: Float, eyeDy: Float): Float =
-        Math.toDegrees(atan2(eyeDy.toDouble(), eyeDx.toDouble())).toFloat()
-
-    private fun fmt(value: Float): String = String.format(Locale.US, "%.1f", value)
-
-    private inline fun debug(message: () -> String) {
-        if (debugLogging) {
-            Log.d(TAG, message())
+    private fun detectSingleFace(crop: Bitmap): DetectionResult {
+        val detections = detector.detect(crop)
+        return if (detections.size == 1) {
+            DetectionResult.SingleFace(detections[0])
+        } else {
+            DetectionResult.Failure(AlignmentFailure("${detections.size} detections in crop ${crop.dims()}"))
         }
     }
 
-    private sealed interface Outcome {
-        class Success(val aligned: Bitmap, val summary: String) : Outcome
-        class Failure(val reason: String) : Outcome
+    private fun extractKeypoints(
+        detection: Detection,
+        crop: Bitmap,
+    ): KeypointResult {
+        val keypoints = detection.keypoints().orElse(null)
+        if (keypoints == null || keypoints.size < REQUIRED_KEYPOINTS) {
+            return KeypointResult.Failure(
+                AlignmentFailure("only ${keypoints?.size ?: 0} keypoints ${crop.dims()} ${detection.where(crop)}")
+            )
+        }
+
+        return keypointExtractor.extract(detection, crop)?.let(KeypointResult::Success)
+            ?: KeypointResult.Failure(
+                AlignmentFailure("only ${keypoints.size} keypoints ${crop.dims()} ${detection.where(crop)}")
+            )
+    }
+
+    private fun validateQuality(
+        keypoints: FaceKeypoints,
+        detection: Detection,
+        crop: Bitmap,
+    ): AlignmentFailure? = when (val quality = qualityGate.validateKeypoints(keypoints)) {
+        QualityResult.Valid -> null
+        is QualityResult.Invalid -> AlignmentFailure(quality.reason + " ${crop.dims()} ${detection.where(crop)}")
     }
 
     fun close() {
         detector.close()
     }
 
+    private sealed interface DetectionResult {
+        data class SingleFace(val detection: Detection) : DetectionResult
+        data class Failure(val failure: AlignmentFailure) : DetectionResult
+    }
+
+    private sealed interface KeypointResult {
+        data class Success(val keypoints: FaceKeypoints) : KeypointResult
+        data class Failure(val failure: AlignmentFailure) : KeypointResult
+    }
+
+    private sealed interface AlignmentResult {
+        data class Success(val aligned: Bitmap, val summary: String) : AlignmentResult
+        data class Failure(val failure: AlignmentFailure) : AlignmentResult
+    }
+
+    private data class AlignmentFailure(val reason: String)
+
     private companion object {
-        const val TAG = "FaceAligner"
-        const val MODEL_ASSET = "blaze_face_short_range.tflite"
-        const val MIN_LANDMARK_DETECTION_CONFIDENCE = 0.5f
-
-        /** Below this the eye landmarks carry too little signal to align on. */
-        const val MIN_INTER_EYE_PX = 20f
-
-        /** Nose offset along the eye axis, as a fraction of inter-eye distance. */
-        const val MAX_NOSE_OFFSET_RATIO = 0.45f
-
         const val REQUIRED_KEYPOINTS = 3
-        const val KP_LEFT_EYE = 0
-        const val KP_RIGHT_EYE = 1
-        const val KP_NOSE = 2
-
-        /**
-         * Upright plus both landscape orientations. 180 is deliberately absent:
-         * an upside-down phone is not a supported hold and each extra probe
-         * costs a full detector pass on the miss path.
-         */
-        val PROBE_ORDER_0 = intArrayOf(0, 90, 270)
-        val PROBE_ORDER_90 = intArrayOf(90, 0, 270)
-        val PROBE_ORDER_270 = intArrayOf(270, 0, 90)
     }
 }
+
+private fun Bitmap.dims(): String = "crop=${width}x${height}"
+
+private fun Detection.where(crop: Bitmap): String {
+    val box = boundingBox()
+    val cover = box.width() * box.height() / (crop.width.toFloat() * crop.height.toFloat()) * 100f
+    return "det=${box.left.roundToInt()},${box.top.roundToInt()} " +
+            "${box.width().roundToInt()}x${box.height().roundToInt()} cover=${cover.format()}%"
+}
+
+private fun Float.format(): String = String.format(Locale.US, "%.1f", this)
