@@ -6,11 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.util.Log
-import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.tasks.components.containers.Detection
-import com.google.mediapipe.tasks.core.BaseOptions
-import com.google.mediapipe.tasks.vision.core.RunningMode
-import com.google.mediapipe.tasks.vision.facedetector.FaceDetector
 import com.nash.core.model.RecognitionConfig
 import com.nash.engine.ml.isDebugBuild
 import java.util.Locale
@@ -42,6 +38,7 @@ import androidx.core.graphics.createBitmap
 internal class FaceAligner(
     context: Context,
     private val config: RecognitionConfig,
+    private val detector: FaceLandmarkDetector = MediaPipeFaceLandmarkDetector(context.applicationContext),
 ) {
     private val appContext = context.applicationContext
     private val debugLogging = appContext.isDebugBuild()
@@ -57,18 +54,6 @@ internal class FaceAligner(
      */
     @Volatile
     private var preferredRotation = 0
-
-    private val detector: FaceDetector by lazy {
-        val baseOptions = BaseOptions.builder()
-            .setModelAssetPath(MODEL_ASSET)
-            .build()
-        val options = FaceDetector.FaceDetectorOptions.builder()
-            .setBaseOptions(baseOptions)
-            .setMinDetectionConfidence(MIN_LANDMARK_DETECTION_CONFIDENCE)
-            .setRunningMode(RunningMode.IMAGE)
-            .build()
-        FaceDetector.createFromOptions(appContext, options)
-    }
 
     /**
      * @return the aligned 112x112 crop, or null if no probed orientation yielded
@@ -108,7 +93,7 @@ internal class FaceAligner(
     }
 
     private fun attempt(crop: Bitmap): Outcome {
-        val detections = detector.detect(BitmapImageBuilder(crop).build()).detections()
+        val detections = detector.detect(crop)
         if (detections.size != 1) {
             return Outcome.Failure("${detections.size} detections in crop ${dims(crop)}")
         }
