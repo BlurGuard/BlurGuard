@@ -65,17 +65,29 @@ class KeepVisibleGateTest {
         store.enroll(embedding)
 
         var clockMs = 100_000L
-        val orchestrator = KeepVisibleOrchestrator(
-            recognizer = recognizer,
+        val config = RecognitionConfig()
+        val state = SessionKeepVisibleStateStore()
+        val commands = KeepVisibleCommandQueue()
+        val liveTracks = LiveTrackRegistry(config) { clockMs }
+        val gate = RecognitionGate(config, liveTracks)
+        val keepVisible = KeepVisibleRecognizerImpl(
+            commands = commands,
+            liveTracks = liveTracks,
+            selector = RecognitionCandidateSelector(
+                commands, liveTracks, gate, state, store, config
+            ),
+            enrollmentPolicy = EnrollmentPolicy(
+                recognizer, store, state, commands, liveTracks, config
+            ),
+            verificationPolicy = VerificationPolicy(recognizer, store, state, liveTracks, config),
+            reVerificationPolicy = ReVerificationPolicy(recognizer, store, state, liveTracks, config),
+            state = state,
             store = store,
-            state = SessionKeepVisibleStateStore(),
-            config = RecognitionConfig(),
-            nowMs = { clockMs },
         )
 
         runBlocking {
             repeat(FRAMES) { frame ->
-                orchestrator.onDetectionFrame(
+                keepVisible.onDetectionFrame(
                     frame = "frame-$frame",
                     metadata = FrameMetadata(
                         frameId = frame.toLong(),

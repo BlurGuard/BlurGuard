@@ -43,6 +43,15 @@ package com.nash.core.model
  * a different face, re-verification revokes it. ~2 s at 30 fps.
  * @property mismatchesToRevoke Consecutive re-verification mismatches before a
  * TRUSTED track is demoted and re-blurred.
+ * @property verifyRetryIntervalFrames Frame-ID interval between automatic
+ * verification passes on the same UNKNOWN/PENDING track. Short, because an
+ * unverified face that should be trusted stays blurred until it passes.
+ * @property maxEnrollAttempts How many failed (null-embed) passes a tapped
+ * enrollment may burn before giving up fail-closed: the request is dropped
+ * and the track reverts to UNKNOWN, i.e. blurred.
+ * @property rejectedRecheckMultiplier Multiplier over [reVerifyIntervalFrames]
+ * for the slow recheck of REJECTED tracks. Was 4 — shortened: mismatch
+ * hysteresis (F2) makes rejection safe to retry sooner.
  */
 data class RecognitionConfig(
     val matchThreshold: Float = 0.45f,
@@ -55,5 +64,8 @@ data class RecognitionConfig(
     val minTrackConfidence: Float = 0.4f,
     val minRecognitionIntervalMs: Long = 150L,
     val reVerifyIntervalFrames: Long = 60L,
-    val mismatchesToRevoke: Int = 2
+    val mismatchesToRevoke: Int = 2,
+    val verifyRetryIntervalFrames: Long = 6L,
+    val maxEnrollAttempts: Int = 10,
+    val rejectedRecheckMultiplier: Long = 2L
 )
