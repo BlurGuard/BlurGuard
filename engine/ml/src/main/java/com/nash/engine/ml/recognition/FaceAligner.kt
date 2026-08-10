@@ -3,7 +3,6 @@ package com.nash.engine.ml.recognition
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Matrix
-import android.util.Log
 import com.google.mediapipe.tasks.components.containers.Detection
 import com.nash.core.model.RecognitionConfig
 import com.nash.engine.ml.isDebugBuild
@@ -33,9 +32,10 @@ internal class FaceAligner(
     context: Context,
     private val config: RecognitionConfig,
     private val detector: FaceLandmarkDetector = MediaPipeFaceLandmarkDetector(context.applicationContext),
+    private val logger: FaceAlignmentLogger = AndroidFaceAlignmentLogger(
+        enabled = context.applicationContext.isDebugBuild(),
+    ),
 ) {
-    private val appContext = context.applicationContext
-    private val debugLogging = appContext.isDebugBuild()
     private val probeStrategy = RotationProbeStrategy()
     private val keypointExtractor = FaceKeypointExtractor()
     private val qualityGate = FaceQualityGate(config)
@@ -62,7 +62,7 @@ internal class FaceAligner(
         when (val cropSize = qualityGate.validateCropSize(faceCrop)) {
             QualityResult.Valid -> Unit
             is QualityResult.Invalid -> {
-                debug { cropSize.reason }
+                logger.debug { cropSize.reason }
                 return null
             }
         }
@@ -77,7 +77,7 @@ internal class FaceAligner(
             when (outcome) {
                 is Outcome.Success -> {
                     preferredRotation = degrees
-                    debug {
+                    logger.debug {
                         val suffix = if (degrees == 0) "" else " probe=${degrees}deg"
                         "aligned: ${outcome.summary}$suffix"
                     }
@@ -88,7 +88,7 @@ internal class FaceAligner(
             }
         }
 
-        debug { "gate: ${firstFailure.orEmpty()} (all probes failed)" }
+        logger.debug { "gate: ${firstFailure.orEmpty()} (all probes failed)" }
         return null
     }
 
@@ -148,12 +148,6 @@ internal class FaceAligner(
 
     private fun fmt(value: Float): String = String.format(Locale.US, "%.1f", value)
 
-    private inline fun debug(message: () -> String) {
-        if (debugLogging) {
-            Log.d(TAG, message())
-        }
-    }
-
     private sealed interface Outcome {
         class Success(val aligned: Bitmap, val summary: String) : Outcome
         class Failure(val reason: String) : Outcome
@@ -164,7 +158,6 @@ internal class FaceAligner(
     }
 
     private companion object {
-        const val TAG = "FaceAligner"
         const val REQUIRED_KEYPOINTS = 3
     }
 }
