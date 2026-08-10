@@ -10,9 +10,6 @@ import com.google.mediapipe.tasks.components.containers.Detection
 import com.nash.core.model.RecognitionConfig
 import com.nash.engine.ml.isDebugBuild
 import java.util.Locale
-import kotlin.math.abs
-import kotlin.math.atan2
-import kotlin.math.hypot
 import kotlin.math.roundToInt
 import androidx.core.graphics.createBitmap
 
@@ -46,6 +43,7 @@ internal class FaceAligner(
 
     private val probeStrategy = RotationProbeStrategy()
     private val keypointExtractor = FaceKeypointExtractor()
+    private val qualityGate = FaceQualityGate(config)
 
     /**
      * Orientation that last produced a usable alignment, tried first on the next
@@ -65,9 +63,12 @@ internal class FaceAligner(
     fun align(faceCrop: Bitmap): Bitmap? {
         // Rotation cannot rescue a crop that is too small to carry a face, so
         // this gate runs once instead of once per probe.
-        if (faceCrop.width < config.minFaceCropPx || faceCrop.height < config.minFaceCropPx) {
-            debug { "gate: crop too small ${dims(faceCrop)} (min ${config.minFaceCropPx})" }
-            return null
+        when (val cropSize = qualityGate.validateCropSize(faceCrop)) {
+            QualityResult.Valid -> Unit
+            is QualityResult.Invalid -> {
+                debug { cropSize.reason }
+                return null
+            }
         }
 
         var firstFailure: String? = null
@@ -113,44 +114,17 @@ internal class FaceAligner(
             ?: return Outcome.Failure(
                 "only ${keypoints.size} keypoints ${dims(crop)} ${where(detection, crop)}"
             )
+        val metrics = FaceQualityMetrics.from(faceKeypoints)
+        when (val quality = qualityGate.validateKeypoints(faceKeypoints)) {
+            QualityResult.Valid -> Unit
+            is QualityResult.Invalid -> return Outcome.Failure(
+                quality.reason + " ${dims(crop)} ${where(detection, crop)}"
+            )
+        }
         val leftEye = faceKeypoints.leftEyeArray()
         val rightEye = faceKeypoints.rightEyeArray()
-        val nose = faceKeypoints.noseArray()
-
-        val eyeDx = rightEye[0] - leftEye[0]
-        val eyeDy = rightEye[1] - leftEye[1]
-        val interEye = hypot(eyeDx, eyeDy)
-        val rollDeg = roll(eyeDx, eyeDy)
-
-        if (interEye < MIN_INTER_EYE_PX) {
-            return Outcome.Failure(
-                "interEye=${fmt(interEye)}px < ${fmt(MIN_INTER_EYE_PX)} roll=${fmt(rollDeg)}deg " +
-                        "${dims(crop)} ${where(detection, crop)}"
-            )
-        }
-
-        // Unit vector along the eye axis, so the frontality test is independent
-        // of head roll.
-        val axisX = eyeDx / interEye
-        val axisY = eyeDy / interEye
-        val midX = (leftEye[0] + rightEye[0]) / 2f
-        val midY = (leftEye[1] + rightEye[1]) / 2f
-        val noseDx = nose[0] - midX
-        val noseDy = nose[1] - midY
-        // Along the eye axis this is yaw. Perpendicular to it this is just the
-        // nose sitting below the eyes, which every face has; it is logged for
-        // context but never gated on.
-        val yaw = abs(noseDx * axisX + noseDy * axisY)
-        val perp = abs(noseDx * -axisY + noseDy * axisX)
-        val maxYaw = interEye * MAX_NOSE_OFFSET_RATIO
-
-        if (yaw > maxYaw) {
-            return Outcome.Failure(
-                "not frontal yaw=${fmt(yaw)} (ratio ${fmt(yaw / interEye)}) perp=${fmt(perp)} " +
-                        "interEye=${fmt(interEye)} max=${fmt(maxYaw)} roll=${fmt(rollDeg)}deg " +
-                        "${dims(crop)} ${where(detection, crop)}"
-            )
-        }
+        val interEye = metrics.interEye
+        val rollDeg = metrics.rollDeg
 
         // fromEyes returns the six affine coefficients [a, b, tx, c, d, ty] in
         // Matrix.setValues() row-major order, not a Matrix. It only returns null
@@ -195,9 +169,6 @@ internal class FaceAligner(
                 "${box.width().roundToInt()}x${box.height().roundToInt()} cover=${fmt(cover)}%"
     }
 
-    private fun roll(eyeDx: Float, eyeDy: Float): Float =
-        Math.toDegrees(atan2(eyeDy.toDouble(), eyeDx.toDouble())).toFloat()
-
     private fun fmt(value: Float): String = String.format(Locale.US, "%.1f", value)
 
     private inline fun debug(message: () -> String) {
@@ -217,12 +188,6 @@ internal class FaceAligner(
 
     private companion object {
         const val TAG = "FaceAligner"
-        /** Below this the eye landmarks carry too little signal to align on. */
-        const val MIN_INTER_EYE_PX = 20f
-
-        /** Nose offset along the eye axis, as a fraction of inter-eye distance. */
-        const val MAX_NOSE_OFFSET_RATIO = 0.45f
-
         const val REQUIRED_KEYPOINTS = 3
     }
 }

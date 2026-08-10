@@ -7,6 +7,7 @@ internal data class FacePoint(
     val x: Float,
     val y: Float,
 )
+
 internal data class FaceKeypoints(
     val leftEye: FacePoint,
     val rightEye: FacePoint,
