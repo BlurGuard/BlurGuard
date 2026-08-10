@@ -2,16 +2,13 @@ package com.nash.engine.ml.recognition
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.Canvas
 import android.graphics.Matrix
-import android.graphics.Paint
 import android.util.Log
 import com.google.mediapipe.tasks.components.containers.Detection
 import com.nash.core.model.RecognitionConfig
 import com.nash.engine.ml.isDebugBuild
 import java.util.Locale
 import kotlin.math.roundToInt
-import androidx.core.graphics.createBitmap
 
 /**
  * Turns a loose face crop into the 112x112 canonical view MobileFaceNet expects.
@@ -39,11 +36,10 @@ internal class FaceAligner(
 ) {
     private val appContext = context.applicationContext
     private val debugLogging = appContext.isDebugBuild()
-    private val filterPaint = Paint(Paint.FILTER_BITMAP_FLAG)
-
     private val probeStrategy = RotationProbeStrategy()
     private val keypointExtractor = FaceKeypointExtractor()
     private val qualityGate = FaceQualityGate(config)
+    private val renderer = AlignedFaceRenderer()
 
     /**
      * Orientation that last produced a usable alignment, tried first on the next
@@ -121,33 +117,14 @@ internal class FaceAligner(
                 quality.reason + " ${dims(crop)} ${where(detection, crop)}"
             )
         }
-        val leftEye = faceKeypoints.leftEyeArray()
-        val rightEye = faceKeypoints.rightEyeArray()
         val interEye = metrics.interEye
         val rollDeg = metrics.rollDeg
 
-        // fromEyes returns the six affine coefficients [a, b, tx, c, d, ty] in
-        // Matrix.setValues() row-major order, not a Matrix. It only returns null
-        // for a near-coincident eye pair, which MIN_INTER_EYE_PX already rules
-        // out, but the branch stays fail-closed rather than asserting.
-        val coefficients = SimilarityTransform.fromEyes(leftEye, rightEye)
+        val aligned = renderer.render(crop, faceKeypoints)
             ?: return Outcome.Failure(
                 "degenerate eye pair interEye=${fmt(interEye)} ${dims(crop)} " +
                         where(detection, crop)
             )
-        val transform = Matrix().apply {
-            setValues(
-                floatArrayOf(
-                    coefficients[0], coefficients[1], coefficients[2],
-                    coefficients[3], coefficients[4], coefficients[5],
-                    0f, 0f, 1f,
-                )
-            )
-        }
-
-        val aligned =
-            createBitmap(SimilarityTransform.OUTPUT_SIZE, SimilarityTransform.OUTPUT_SIZE)
-        Canvas(aligned).drawBitmap(crop, transform, filterPaint)
 
         return Outcome.Success(
             aligned = aligned,
