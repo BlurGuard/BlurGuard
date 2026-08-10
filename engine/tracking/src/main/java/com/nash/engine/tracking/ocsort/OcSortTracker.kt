@@ -38,6 +38,7 @@ class OcSortTracker @Inject constructor(
     private val tracks = mutableListOf<OcSortTrack>()
     private val partitioner = DetectionPartitioner(config)
     private val associationStage = AssociationStage(AssociationCostFactory(config))
+    private val lifecycle = TrackLifecycleManager(config)
     private var nextId = 1L
 
     override fun update(
@@ -45,54 +46,54 @@ class OcSortTracker @Inject constructor(
         metadata: FrameMetadata
     ): List<TrackedBox> {
         val frameId = metadata.frameId
-        tracks.forEach { it.predictTo(frameId) }
+        lifecycle.predict(tracks, frameId)
 
         val partitions = partitioner.partition(detections)
-        val unmatchedHigh = partitions.highScore.toMutableList()
-        val unmatchedLow = partitions.lowScore.toMutableList()
-        val unmatchedTracks = tracks.toMutableList()
 
+        val association = associateDetections(partitions, frameId)
+
+        // Leftover high-score detections spawn new tracks (low-score never do).
+        nextId = lifecycle.spawn(tracks, association.unmatchedDetections, frameId, nextId)
+
+        // Same expiry rule as ByteTrackTracker: coast, then drop.
+        lifecycle.expire(tracks, frameId)
+
+        return tracks.map { it.toTrackedBox() }
+    }
+
+    private fun associateDetections(
+        partitions: DetectionPartitions,
+        frameId: Long,
+    ): AssociationResult {
         // Stage 1 — high-score detections vs all tracks: IoU + OCM, Hungarian.
         val firstStage = associationStage.associate(
-            detections = unmatchedHigh,
-            tracks = unmatchedTracks,
+            detections = partitions.highScore,
+            tracks = tracks,
             frameId = frameId,
             mode = AssociationMode(useOcm = true, iouThreshold = config.iouThreshold) { it.predictedBox() },
         )
         // Stage 2 — BYTE: low-score detections re-confirm leftover tracks (IoU only).
         val secondStage = associationStage.associate(
-            detections = unmatchedLow,
+            detections = partitions.lowScore,
             tracks = firstStage.unmatchedTracks,
             frameId = frameId,
             mode = AssociationMode(useOcm = false, iouThreshold = config.iouThreshold) { it.predictedBox() },
         )
         // Stage 3 — OCR: leftover high detections vs still-lost tracks, on the
         // last OBSERVED box. Rescues tracks whose prediction drifted while lost.
-        val thirdStage = associationStage.associate(
+        return associationStage.associate(
             detections = firstStage.unmatchedDetections,
             tracks = secondStage.unmatchedTracks,
             frameId = frameId,
             mode = AssociationMode(useOcm = false, iouThreshold = config.ocrIouThreshold) { it.lastObservation },
         )
-        unmatchedHigh.clear()
-        unmatchedHigh += thirdStage.unmatchedDetections
-
-        // Leftover high-score detections spawn new tracks (low-score never do).
-        unmatchedHigh.forEach { detection ->
-            tracks += OcSortTrack(nextId++, detection, frameId)
-        }
-
-        // Same expiry rule as ByteTrackTracker: coast, then drop.
-        tracks.removeAll { frameId - it.lastUpdatedFrame > config.maxLostFrames }
-
-        return tracks.map { it.toTrackedBox() }
     }
 
     override fun predict(metadata: FrameMetadata): List<TrackedBox> {
         val frameId = metadata.frameId
-        tracks.forEach { it.predictTo(frameId) }
+        lifecycle.predict(tracks, frameId)
         // A stalled detector must not leave ghost boxes coasting forever.
-        tracks.removeAll { frameId - it.lastUpdatedFrame > config.maxLostFrames }
+        lifecycle.expire(tracks, frameId)
         return tracks.map { it.toTrackedBox() }
     }
 
