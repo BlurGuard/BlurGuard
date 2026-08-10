@@ -2,10 +2,8 @@ package com.nash.engine.tracking.ocsort
 
 import com.nash.core.model.BoundingBox
 import com.nash.core.model.DetectionBox
-import com.nash.core.model.DetectionClass
 import com.nash.core.model.FrameMetadata
 import com.nash.core.model.OcSortConfig
-import com.nash.core.model.TrackId
 import com.nash.core.model.TrackedBox
 import com.nash.core.model.Tracker
 import javax.inject.Inject
@@ -43,7 +41,7 @@ class OcSortTracker @Inject constructor(
     private val config: OcSortConfig
 ) : Tracker {
 
-    private val tracks = mutableListOf<Track>()
+    private val tracks = mutableListOf<OcSortTrack>()
     private var nextId = 1L
 
     override fun update(
@@ -53,12 +51,9 @@ class OcSortTracker @Inject constructor(
         val frameId = metadata.frameId
         tracks.forEach { it.predictTo(frameId) }
 
-        val unmatchedHigh = detections
-            .filter { it.confidence >= config.highScoreThreshold }
-            .toMutableList()
-        val unmatchedLow = detections
-            .filter { it.confidence >= config.lowScoreThreshold && it.confidence < config.highScoreThreshold }
-            .toMutableList()
+        val partitions = DetectionPartitioner(config).partition(detections)
+        val unmatchedHigh = partitions.highScore.toMutableList()
+        val unmatchedLow = partitions.lowScore.toMutableList()
         val unmatchedTracks = tracks.toMutableList()
 
         // Stage 1 — high-score detections vs all tracks: IoU + OCM, Hungarian.
@@ -77,7 +72,7 @@ class OcSortTracker @Inject constructor(
 
         // Leftover high-score detections spawn new tracks (low-score never do).
         unmatchedHigh.forEach { detection ->
-            tracks += Track(nextId++, detection, frameId)
+            tracks += OcSortTrack(nextId++, detection, frameId)
         }
 
         // Same expiry rule as ByteTrackTracker: coast, then drop.
@@ -103,11 +98,11 @@ class OcSortTracker @Inject constructor(
 
     private fun associate(
         detections: MutableList<DetectionBox>,
-        candidates: MutableList<Track>,
+        candidates: MutableList<OcSortTrack>,
         frameId: Long,
         useOcm: Boolean,
         iouThreshold: Float,
-        boxOf: (Track) -> BoundingBox
+        boxOf: (OcSortTrack) -> BoundingBox
     ) {
         if (detections.isEmpty() || candidates.isEmpty()) return
 
@@ -127,7 +122,7 @@ class OcSortTracker @Inject constructor(
 
         val assignment = HungarianSolver.solve(cost)
         val matchedDetections = mutableListOf<Int>()
-        val matchedTracks = mutableListOf<Track>()
+        val matchedTracks = mutableListOf<OcSortTrack>()
         for (d in assignment.indices) {
             val t = assignment[d]
             if (t < 0 || cost[d][t] >= HungarianSolver.FORBIDDEN / 2) continue
@@ -143,7 +138,7 @@ class OcSortTracker @Inject constructor(
      * OCM term: angle between the track's observed motion direction and the
      * direction implied by accepting this detection, normalized to [0, 1].
      */
-    private fun directionCost(track: Track, detection: DetectionBox): Double {
+    private fun directionCost(track: OcSortTrack, detection: DetectionBox): Double {
         val previous = track.previousObservation ?: return 0.0
         val v1x = (track.lastObservation.centerX - previous.centerX).toDouble()
         val v1y = (track.lastObservation.centerY - previous.centerY).toDouble()
@@ -169,93 +164,4 @@ class OcSortTracker @Inject constructor(
         return intersection.toDouble() / (areaA + areaB - intersection).toDouble()
     }
 
-    // ------------------------------------------------------------------ //
-
-    private class Track(
-        val id: Long,
-        detection: DetectionBox,
-        frameId: Long
-    ) {
-        val clazz: DetectionClass = detection.clazz
-        val kf = KalmanBoxFilter(detection.box.toMeasurement())
-        var confidence = detection.confidence
-        var lastUpdatedFrame = frameId
-        var predictedFrame = frameId
-
-        /** OC-SORT trusts observations over filter state; keep the real ones. */
-        var lastObservation: BoundingBox = detection.box
-        var lastObservationFrame: Long = frameId
-        var previousObservation: BoundingBox? = null
-
-        /** Filter snapshot at the last real observation — rollback point for ORU. */
-        private var frozenState = kf.stateSnapshot()
-        private var frozenCovariance = kf.covarianceSnapshot()
-
-        fun predictTo(frameId: Long) {
-            val gap = frameId - predictedFrame
-            if (gap <= 0) return
-            repeat(gap.toInt()) { kf.predict() }
-            predictedFrame = frameId
-        }
-
-        fun updateWith(detection: DetectionBox, frameId: Long) {
-            val gap = frameId - lastObservationFrame
-            if (gap > 1) {
-                // ORU: rollback to the last observation, then re-run the filter
-                // along a virtual linear trajectory to the new observation, so
-                // blind-coasting error doesn't poison the velocity estimate.
-                kf.restore(frozenState, frozenCovariance)
-                val zLast = lastObservation.toMeasurement()
-                val zNew = detection.box.toMeasurement()
-                for (step in 1..gap) {
-                    kf.predict()
-                    val t = step.toDouble() / gap
-                    kf.update(DoubleArray(4) { zLast[it] + (zNew[it] - zLast[it]) * t })
-                }
-            } else {
-                kf.update(detection.box.toMeasurement())
-            }
-
-            previousObservation = lastObservation
-            lastObservation = detection.box
-            lastObservationFrame = frameId
-            frozenState = kf.stateSnapshot()
-            frozenCovariance = kf.covarianceSnapshot()
-
-            confidence = detection.confidence
-            lastUpdatedFrame = frameId
-            predictedFrame = frameId
-        }
-
-        /** Filter estimate, clamped to the frame; falls back to the last observation. */
-        fun predictedBox(): BoundingBox {
-            val state = kf.boxState() ?: return lastObservation
-            val (cx, cy, w, h) = state
-            val left = (cx - w / 2).toFloat().coerceIn(0f, 1f)
-            val top = (cy - h / 2).toFloat().coerceIn(0f, 1f)
-            val right = (cx + w / 2).toFloat().coerceIn(0f, 1f)
-            val bottom = (cy + h / 2).toFloat().coerceIn(0f, 1f)
-            // Fail-closed: a degenerate estimate must not un-blur someone.
-            if (right - left < 1e-4f || bottom - top < 1e-4f) return lastObservation
-            return BoundingBox(left, top, right, bottom)
-        }
-
-        fun toTrackedBox() = TrackedBox(
-            id = TrackId(id),
-            box = predictedBox(),
-            clazz = clazz,
-            confidence = confidence,
-            lastUpdatedFrame = lastUpdatedFrame
-        )
-
-        private operator fun DoubleArray.component4() = this[3]
-    }
-
-    private companion object {
-        fun BoundingBox.toMeasurement(): DoubleArray {
-            val w = (right - left).coerceAtLeast(1e-6f).toDouble()
-            val h = (bottom - top).coerceAtLeast(1e-6f).toDouble()
-            return doubleArrayOf(centerX.toDouble(), centerY.toDouble(), w * h, w / h)
-        }
-    }
 }

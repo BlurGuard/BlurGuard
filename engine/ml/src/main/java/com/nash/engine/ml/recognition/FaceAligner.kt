@@ -67,68 +67,61 @@ internal class FaceAligner(
             }
         }
 
-        var firstFailure: String? = null
+        var firstFailure: AlignmentFailure? = null
         for (degrees in probeStrategy.order(preferredRotation)) {
             val probe = if (degrees == 0) faceCrop else faceCrop.rotated(degrees)
-            val outcome = attempt(probe)
+            val result = alignProbe(probe)
             if (probe !== faceCrop) {
                 probe.recycle()
             }
-            when (outcome) {
-                is Outcome.Success -> {
+            when (result) {
+                is AlignmentResult.Success -> {
                     preferredRotation = degrees
                     logger.debug {
                         val suffix = if (degrees == 0) "" else " probe=${degrees}deg"
-                        "aligned: ${outcome.summary}$suffix"
+                        "aligned: ${result.summary}$suffix"
                     }
-                    return outcome.aligned
+                    return result.aligned
                 }
 
-                is Outcome.Failure -> if (firstFailure == null) firstFailure = outcome.reason
+                is AlignmentResult.Failure -> if (firstFailure == null) firstFailure = result.failure
             }
         }
 
-        logger.debug { "gate: ${firstFailure.orEmpty()} (all probes failed)" }
+        logger.debug { "gate: ${firstFailure?.reason.orEmpty()} (all probes failed)" }
         return null
     }
 
-    private fun attempt(crop: Bitmap): Outcome {
-        val detections = detector.detect(crop)
-        if (detections.size != 1) {
-            return Outcome.Failure("${detections.size} detections in crop ${dims(crop)}")
+    private fun alignProbe(crop: Bitmap): AlignmentResult {
+        val detectionResult = detectSingleFace(crop)
+        val detection = when (detectionResult) {
+            is DetectionResult.SingleFace -> detectionResult.detection
+            is DetectionResult.Failure -> return AlignmentResult.Failure(detectionResult.failure)
         }
 
-        val detection = detections[0]
-        val keypoints = detection.keypoints().orElse(null)
-        if (keypoints == null || keypoints.size < REQUIRED_KEYPOINTS) {
-            return Outcome.Failure(
-                "only ${keypoints?.size ?: 0} keypoints ${dims(crop)} ${where(detection, crop)}"
-            )
+        val keypointResult = extractKeypoints(detection, crop)
+        val faceKeypoints = when (keypointResult) {
+            is KeypointResult.Success -> keypointResult.keypoints
+            is KeypointResult.Failure -> return AlignmentResult.Failure(keypointResult.failure)
         }
 
-        val faceKeypoints = keypointExtractor.extract(detection, crop)
-            ?: return Outcome.Failure(
-                "only ${keypoints.size} keypoints ${dims(crop)} ${where(detection, crop)}"
-            )
+        val qualityFailure = validateQuality(faceKeypoints, detection, crop)
+        if (qualityFailure != null) {
+            return AlignmentResult.Failure(qualityFailure)
+        }
+
         val metrics = FaceQualityMetrics.from(faceKeypoints)
-        when (val quality = qualityGate.validateKeypoints(faceKeypoints)) {
-            QualityResult.Valid -> Unit
-            is QualityResult.Invalid -> return Outcome.Failure(
-                quality.reason + " ${dims(crop)} ${where(detection, crop)}"
-            )
-        }
-        val interEye = metrics.interEye
-        val rollDeg = metrics.rollDeg
-
         val aligned = renderer.render(crop, faceKeypoints)
-            ?: return Outcome.Failure(
-                "degenerate eye pair interEye=${fmt(interEye)} ${dims(crop)} " +
-                        where(detection, crop)
+            ?: return AlignmentResult.Failure(
+                AlignmentFailure(
+                    "degenerate eye pair interEye=${metrics.interEye.format()} ${crop.dims()} " +
+                            detection.where(crop)
+                )
             )
 
-        return Outcome.Success(
+        return AlignmentResult.Success(
             aligned = aligned,
-            summary = "interEye=${fmt(interEye)} roll=${fmt(rollDeg)}deg ${dims(crop)}",
+            summary = "interEye=${metrics.interEye.format()} roll=${metrics.rollDeg.format()}deg ${crop.dims()}",
         )
     }
 
@@ -137,27 +130,74 @@ internal class FaceAligner(
         return Bitmap.createBitmap(this, 0, 0, width, height, matrix, true)
     }
 
-    private fun dims(bitmap: Bitmap): String = "crop=${bitmap.width}x${bitmap.height}"
-
-    private fun where(detection: Detection, crop: Bitmap): String {
-        val box = detection.boundingBox()
-        val cover = box.width() * box.height() / (crop.width.toFloat() * crop.height.toFloat()) * 100f
-        return "det=${box.left.roundToInt()},${box.top.roundToInt()} " +
-                "${box.width().roundToInt()}x${box.height().roundToInt()} cover=${fmt(cover)}%"
+    private fun detectSingleFace(crop: Bitmap): DetectionResult {
+        val detections = detector.detect(crop)
+        return if (detections.size == 1) {
+            DetectionResult.SingleFace(detections[0])
+        } else {
+            DetectionResult.Failure(AlignmentFailure("${detections.size} detections in crop ${crop.dims()}"))
+        }
     }
 
-    private fun fmt(value: Float): String = String.format(Locale.US, "%.1f", value)
+    private fun extractKeypoints(
+        detection: Detection,
+        crop: Bitmap,
+    ): KeypointResult {
+        val keypoints = detection.keypoints().orElse(null)
+        if (keypoints == null || keypoints.size < REQUIRED_KEYPOINTS) {
+            return KeypointResult.Failure(
+                AlignmentFailure("only ${keypoints?.size ?: 0} keypoints ${crop.dims()} ${detection.where(crop)}")
+            )
+        }
 
-    private sealed interface Outcome {
-        class Success(val aligned: Bitmap, val summary: String) : Outcome
-        class Failure(val reason: String) : Outcome
+        return keypointExtractor.extract(detection, crop)?.let(KeypointResult::Success)
+            ?: KeypointResult.Failure(
+                AlignmentFailure("only ${keypoints.size} keypoints ${crop.dims()} ${detection.where(crop)}")
+            )
+    }
+
+    private fun validateQuality(
+        keypoints: FaceKeypoints,
+        detection: Detection,
+        crop: Bitmap,
+    ): AlignmentFailure? = when (val quality = qualityGate.validateKeypoints(keypoints)) {
+        QualityResult.Valid -> null
+        is QualityResult.Invalid -> AlignmentFailure(quality.reason + " ${crop.dims()} ${detection.where(crop)}")
     }
 
     fun close() {
         detector.close()
     }
 
+    private sealed interface DetectionResult {
+        data class SingleFace(val detection: Detection) : DetectionResult
+        data class Failure(val failure: AlignmentFailure) : DetectionResult
+    }
+
+    private sealed interface KeypointResult {
+        data class Success(val keypoints: FaceKeypoints) : KeypointResult
+        data class Failure(val failure: AlignmentFailure) : KeypointResult
+    }
+
+    private sealed interface AlignmentResult {
+        data class Success(val aligned: Bitmap, val summary: String) : AlignmentResult
+        data class Failure(val failure: AlignmentFailure) : AlignmentResult
+    }
+
+    private data class AlignmentFailure(val reason: String)
+
     private companion object {
         const val REQUIRED_KEYPOINTS = 3
     }
 }
+
+private fun Bitmap.dims(): String = "crop=${width}x${height}"
+
+private fun Detection.where(crop: Bitmap): String {
+    val box = boundingBox()
+    val cover = box.width() * box.height() / (crop.width.toFloat() * crop.height.toFloat()) * 100f
+    return "det=${box.left.roundToInt()},${box.top.roundToInt()} " +
+            "${box.width().roundToInt()}x${box.height().roundToInt()} cover=${cover.format()}%"
+}
+
+private fun Float.format(): String = String.format(Locale.US, "%.1f", this)
