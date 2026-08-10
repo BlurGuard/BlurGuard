@@ -44,6 +44,8 @@ internal class FaceAligner(
     private val debugLogging = appContext.isDebugBuild()
     private val filterPaint = Paint(Paint.FILTER_BITMAP_FLAG)
 
+    private val probeStrategy = RotationProbeStrategy()
+
     /**
      * Orientation that last produced a usable alignment, tried first on the next
      * pass. A device held steadily in landscape therefore stops paying for the
@@ -68,7 +70,7 @@ internal class FaceAligner(
         }
 
         var firstFailure: String? = null
-        for (degrees in probeOrder()) {
+        for (degrees in probeStrategy.order(preferredRotation)) {
             val probe = if (degrees == 0) faceCrop else faceCrop.rotated(degrees)
             val outcome = attempt(probe)
             if (probe !== faceCrop) {
@@ -190,12 +192,6 @@ internal class FaceAligner(
         )
     }
 
-    private fun probeOrder(): IntArray = when (preferredRotation) {
-        90 -> PROBE_ORDER_90
-        270 -> PROBE_ORDER_270
-        else -> PROBE_ORDER_0
-    }
-
     private fun Bitmap.rotated(degrees: Int): Bitmap {
         val matrix = Matrix().apply { postRotate(degrees.toFloat()) }
         return Bitmap.createBitmap(this, 0, 0, width, height, matrix, true)
@@ -232,9 +228,6 @@ internal class FaceAligner(
 
     private companion object {
         const val TAG = "FaceAligner"
-        const val MODEL_ASSET = "blaze_face_short_range.tflite"
-        const val MIN_LANDMARK_DETECTION_CONFIDENCE = 0.5f
-
         /** Below this the eye landmarks carry too little signal to align on. */
         const val MIN_INTER_EYE_PX = 20f
 
@@ -245,14 +238,5 @@ internal class FaceAligner(
         const val KP_LEFT_EYE = 0
         const val KP_RIGHT_EYE = 1
         const val KP_NOSE = 2
-
-        /**
-         * Upright plus both landscape orientations. 180 is deliberately absent:
-         * an upside-down phone is not a supported hold and each extra probe
-         * costs a full detector pass on the miss path.
-         */
-        val PROBE_ORDER_0 = intArrayOf(0, 90, 270)
-        val PROBE_ORDER_90 = intArrayOf(90, 0, 270)
-        val PROBE_ORDER_270 = intArrayOf(270, 0, 90)
     }
 }
