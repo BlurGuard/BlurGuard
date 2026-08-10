@@ -45,6 +45,7 @@ internal class FaceAligner(
     private val filterPaint = Paint(Paint.FILTER_BITMAP_FLAG)
 
     private val probeStrategy = RotationProbeStrategy()
+    private val keypointExtractor = FaceKeypointExtractor()
 
     /**
      * Orientation that last produced a usable alignment, tried first on the next
@@ -108,25 +109,13 @@ internal class FaceAligner(
             )
         }
 
-        val width = crop.width.toFloat()
-        val height = crop.height.toFloat()
-        val first = floatArrayOf(
-            keypoints[KP_LEFT_EYE].x() * width,
-            keypoints[KP_LEFT_EYE].y() * height,
-        )
-        val second = floatArrayOf(
-            keypoints[KP_RIGHT_EYE].x() * width,
-            keypoints[KP_RIGHT_EYE].y() * height,
-        )
-        // BlazeFace reports the subject's own left and right eye. Order by image
-        // x so the transform always receives the image-left eye first.
-        val leftIsFirst = first[0] <= second[0]
-        val leftEye = if (leftIsFirst) first else second
-        val rightEye = if (leftIsFirst) second else first
-        val nose = floatArrayOf(
-            keypoints[KP_NOSE].x() * width,
-            keypoints[KP_NOSE].y() * height,
-        )
+        val faceKeypoints = keypointExtractor.extract(detection, crop)
+            ?: return Outcome.Failure(
+                "only ${keypoints.size} keypoints ${dims(crop)} ${where(detection, crop)}"
+            )
+        val leftEye = faceKeypoints.leftEyeArray()
+        val rightEye = faceKeypoints.rightEyeArray()
+        val nose = faceKeypoints.noseArray()
 
         val eyeDx = rightEye[0] - leftEye[0]
         val eyeDy = rightEye[1] - leftEye[1]
@@ -235,8 +224,5 @@ internal class FaceAligner(
         const val MAX_NOSE_OFFSET_RATIO = 0.45f
 
         const val REQUIRED_KEYPOINTS = 3
-        const val KP_LEFT_EYE = 0
-        const val KP_RIGHT_EYE = 1
-        const val KP_NOSE = 2
     }
 }
